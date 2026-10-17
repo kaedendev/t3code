@@ -124,7 +124,18 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    return yield* git.getReviewDiffPreview(input);
+    const getDriverDiffPreview = handle.driver.getDiffPreview;
+    if (getDriverDiffPreview) {
+      return yield* getDriverDiffPreview(input);
+    }
+    if (handle.kind === "git") {
+      return yield* git.getReviewDiffPreview(input);
+    }
+    return yield* new VcsUnsupportedOperationError({
+      operation: "ReviewService.getDiffPreview",
+      kind: handle.kind,
+      detail: `The ${handle.kind} VCS driver does not support review diff previews.`,
+    });
   });
 
   const getDiffFileContents: ReviewService["Service"]["getDiffFileContents"] = Effect.fn(
@@ -133,15 +144,22 @@ export const make = Effect.gen(function* () {
     yield* assertWorkspaceBoundCwd("ReviewService.getDiffFileContents", input.cwd);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
-    if (handle?.kind !== "git") {
-      return yield* new VcsUnsupportedOperationError({
-        operation: "ReviewService.getDiffFileContents",
-        kind: handle?.kind ?? "unknown",
-        detail: "Unchanged diff expansion currently requires a Git repository.",
-      });
+    const driverGetDiffFileContents = handle?.driver.getDiffFileContents;
+    if (driverGetDiffFileContents) {
+      return yield* driverGetDiffFileContents(input);
+    }
+    if (handle?.kind === "git") {
+      return yield* git.getReviewDiffFileContents(input);
     }
 
-    return yield* git.getReviewDiffFileContents(input);
+    return yield* new VcsUnsupportedOperationError({
+      operation: "ReviewService.getDiffFileContents",
+      kind: handle?.kind ?? "unknown",
+      detail:
+        handle?.kind === "jj"
+          ? "Unchanged diff expansion is not available for this version control system."
+          : "Unchanged diff expansion currently requires a Git repository.",
+    });
   });
 
   return ReviewService.of({
