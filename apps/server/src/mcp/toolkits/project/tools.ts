@@ -35,6 +35,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import * as VcsDriverRegistry from "../../../vcs/VcsDriverRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
@@ -166,6 +167,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     ThreadLaunchService.ThreadLaunchService,
     ManagedProjectFolders.ManagedProjectFolders,
     GitWorkflowService.GitWorkflowService,
+    VcsDriverRegistry.VcsDriverRegistry,
     FileSystem.FileSystem,
     ServerConfig.ServerConfig,
     ServerSettings.ServerSettingsService,

@@ -242,6 +242,7 @@ export function ComposerPermissionsSection(props: {
 }
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  workspaceNoun: string;
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
@@ -295,6 +296,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         <ContextWindowMeterPlaceholder />
       ) : null}
       <ComposerPrimaryActions
+        workspaceNoun={props.workspaceNoun}
         compact={props.compact}
         canOperateThread={props.canOperateThread}
         pendingAction={props.pendingAction}
