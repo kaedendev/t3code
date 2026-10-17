@@ -59,6 +59,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -487,7 +488,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
     ),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      ),
+    ),
     Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-remote-delegation-box-" }).pipe(
@@ -613,7 +619,12 @@ const makeLaptop = (
       Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
       Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
-      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        ),
+      ),
       Layer.fresh,
     );
     const here = yield* Layer.build(layerHere);
