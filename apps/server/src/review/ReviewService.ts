@@ -20,6 +20,7 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { isWithinRoot } from "../workspace/pathContainment.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 
 const WORKSPACE_BOUND_SUBJECTS = {
@@ -80,7 +81,7 @@ export const make = Effect.gen(function* () {
       canonicalizePath(config.cwd),
     ]);
     if (
-      KnownWorkspaces.isWithinRoot(path, candidate, workspaceRoot) ||
+      isWithinRoot(path, candidate, workspaceRoot) ||
       (yield* knownWorkspaces.contains(candidate))
     ) {
       return;
