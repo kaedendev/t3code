@@ -30,6 +30,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as UsageLimitRecoveryWorker from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -175,7 +176,12 @@ it.effect.each([
         const layerTest = Layer.merge(
           OrchestratorMcpService.layer.pipe(
             Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-            Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+                Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+              ),
+            ),
           ),
           layerRecovery,
         ).pipe(
