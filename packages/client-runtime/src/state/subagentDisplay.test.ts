@@ -1,6 +1,7 @@
+import { ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-
-import { subagentDetailPreview } from "./subagentDisplay.js";
+import { JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
+import { resolveSubagentMetadata, subagentDetailPreview } from "./subagentDisplay.js";
 
 describe("subagentDetailPreview", () => {
   it("prefers progress for live work and results for settled work", () => {
@@ -38,4 +39,30 @@ it("normalizes Unicode whitespace and ignores a large hidden suffix", () => {
   expect(subagentDetailPreview({ status: "failed", result: "x".repeat(279) + "😀" })).toBe(
     "x".repeat(279) + "…",
   );
+});
+
+describe("resolveSubagentMetadata", () => {
+  const parentThread = { projectId: ProjectId.make("parent"), worktreePath: null };
+  const parentProject = { workspaceRoot: "/repo" };
+
+  it("uses jj terminology without changing the workspace metadata kinds", () => {
+    const input = {
+      model: null,
+      parentThread,
+      parentProject,
+      terminology: JJ_VCS_TERMINOLOGY,
+    };
+    expect(
+      resolveSubagentMetadata({
+        ...input,
+        childThread: { branch: "fix/agents", worktreePath: "/workspaces/agents" },
+      }).workspace,
+    ).toEqual([{ kind: "ref", label: "Bookmark", value: "fix/agents" }]);
+    expect(
+      resolveSubagentMetadata({
+        ...input,
+        childThread: { branch: null, worktreePath: "/workspaces/agents" },
+      }).workspace,
+    ).toEqual([{ kind: "workspace", label: "Workspace", value: "agents" }]);
+  });
 });

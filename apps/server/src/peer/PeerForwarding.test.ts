@@ -27,6 +27,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -222,6 +223,7 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
         Layer.mergeAll(
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
           Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+          Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({ detect: () => Effect.succeed(null) }),
         ),
       ),
       Layer.provide(boxProjects(seen)),
@@ -281,6 +283,7 @@ const makeLaptop = Effect.gen(function* () {
       Layer.mergeAll(
         Layer.mock(GitWorkflowService.GitWorkflowService)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({ detect: () => Effect.succeed(null) }),
       ),
     ),
     Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),

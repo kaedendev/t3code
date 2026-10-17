@@ -246,6 +246,7 @@ export function ComposerPermissionsSection(props: {
 }
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  workspaceNoun: string;
   children?: React.ReactNode;
   compact: boolean;
   canOperateThread: boolean;
@@ -302,6 +303,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : null}
       {props.children}
       <ComposerPrimaryActions
+        workspaceNoun={props.workspaceNoun}
         compact={props.compact}
         canOperateThread={props.canOperateThread}
         pendingAction={props.pendingAction}
