@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -45,6 +46,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as ChangeRequestStep from "../sourceControl/ChangeRequestStep.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
   fromRunner,
@@ -602,6 +604,10 @@ function preparePullRequestThread(
 function makeManager(input?: {
   providerScenario?: FakeProviderScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  resolveSourceControlProvider?: () => Effect.Effect<
+    SourceControlProvider["Service"],
+    SourceControlProviderFailure
+  >;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -700,7 +706,7 @@ function makeManager(input?: {
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
-          resolve: () => Effect.succeed(provider),
+          resolve: input?.resolveSourceControlProvider ?? (() => Effect.succeed(provider)),
           discover: Effect.succeed([]),
         }),
       ),
@@ -2124,7 +2130,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     ],
     ["https://github.example.com/team/repository/issues/42", null],
   ] as const)("reads the repository from the returned PR URL %s", (url, expected) => {
-    expect(GitManager.pullRequestRepositoryKey(url)).toBe(expected);
+    expect(ChangeRequestStep.pullRequestRepositoryKey(url)).toBe(expected);
   });
 
   it.effect("distinguishes Enterprise forks with the same head branch", () =>
@@ -3469,6 +3475,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       NodeFS.writeFileSync(NodePath.join(repoDir, "retried.txt"), "retried\n");
       yield* runGit(repoDir, ["add", "retried.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Retried push"]);
+      yield* runGit(remoteDir, [
+        "--git-dir=.",
+        "config",
+        "core.hooksPath",
+        NodePath.join(remoteDir, "hooks"),
+      ]);
       const rejectOnce = NodePath.join(remoteDir, "reject-once");
       NodeFS.writeFileSync(rejectOnce, "");
       NodeFS.writeFileSync(
@@ -3496,6 +3508,80 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(result.push.status).toBe("pushed");
       expect(recorded).toEqual([{ branch: "feature/retried-push", baseBranch: "main" }]);
+    }),
+  );
+
+  it.effect("captures the PR temp directory when constructing the manager", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr"]);
+      const directory = yield* makeTempDir("t3code-pr-snapshot-");
+      const { service } = createFakeSourceControlProvider();
+      let createdBodyFile: string | undefined;
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          createChangeRequest: ({ bodyFile }) =>
+            Effect.sync(() => {
+              createdBodyFile = bodyFile;
+              expect(NodePath.dirname(bodyFile)).toBe(directory);
+              expect(NodeFS.readFileSync(bodyFile, "utf8").length).toBeGreaterThan(0);
+            }),
+        },
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { TMPDIR: directory } })),
+        ),
+      );
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+      expect(result.pr.status).toBe("created");
+      expect(createdBodyFile).toBeDefined();
+      expect(NodeFS.existsSync(createdBodyFile!)).toBe(false);
+    }),
+  );
+
+  it.effect("resolves the PR provider before refreshing branch status", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr"]);
+      const commands: string[] = [];
+      const failure = new SourceControlProviderFailure({
+        provider: SourceControlProviderKind.make("github"),
+        operation: "resolve",
+        cwd: repoDir,
+        detail: "Provider unavailable",
+      });
+      const { manager } = yield* makeManager({
+        gitCommands: commands,
+        resolveSourceControlProvider: () => Effect.fail(failure),
+      });
+      const error = yield* manager
+        .runStackedAction(
+          { cwd: repoDir, action: "create_pr", actionId: "provider-before-status" },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  if (event.kind === "phase_started" && event.phase === "pr") {
+                    commands.length = 0;
+                  }
+                }),
+            },
+          },
+        )
+        .pipe(Effect.flip);
+      expect(error).toBe(failure);
+      expect(commands).toEqual([]);
     }),
   );
 
@@ -3783,7 +3869,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           headRepositoryNameWithOwner: `${owner}/project`,
           headRepositoryOwnerLogin: owner,
         };
-        const repository = GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
+        const repository = ChangeRequestStep.parseRepositoryNameWithOwnerFromRemoteUrl(
           `https://forgejo.example/forgejo/${owner}/project.git`,
           { repositoryNameFromRemoteUrl },
         );
@@ -3794,9 +3880,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           headRepositoryOwnerLogin: repository?.split("/")[0] ?? null,
           isCrossRepository: owner !== "maria",
         };
-        expect(GitManager.matchesBranchHeadContext(pr, context)).toBe(true);
+        expect(ChangeRequestStep.matchesBranchHeadContext(pr, context)).toBe(true);
         expect(
-          GitManager.matchesBranchHeadContext(pr, {
+          ChangeRequestStep.matchesBranchHeadContext(pr, {
             ...context,
             headRepositoryNameWithOwner: "other/project",
             headRepositoryOwnerLogin: "other",
@@ -3804,7 +3890,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ).toBe(false);
       }
       expect(
-        GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
+        ChangeRequestStep.parseRepositoryNameWithOwnerFromRemoteUrl(
           "https://gitlab.example/group/maria/project.git",
           {},
         ),
@@ -3822,7 +3908,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
 
       expect(
-        GitManager.matchesBranchHeadContext(
+        ChangeRequestStep.matchesBranchHeadContext(
           {
             number: 41,
             title: "Same-repo PR",
@@ -3840,7 +3926,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       ).toBe(false);
 
       expect(
-        GitManager.matchesBranchHeadContext(
+        ChangeRequestStep.matchesBranchHeadContext(
           {
             number: 142,
             title: "Fork PR",
@@ -3869,7 +3955,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
 
       expect(
-        GitManager.matchesBranchHeadContext(
+        ChangeRequestStep.matchesBranchHeadContext(
           {
             number: 2284,
             title: "Improve branch mismatch warnings",
