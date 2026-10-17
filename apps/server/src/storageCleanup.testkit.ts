@@ -145,8 +145,6 @@ export const cleanupFixture = (
         "--colocate",
         "--name",
         workspaceNameForRef("feature"),
-        "-m",
-        "t3:feature",
         "-r",
         "feature",
         worktree,
@@ -168,6 +166,7 @@ export const cleanupFixture = (
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
     let fullStatusCalls = 0;
+    let gitExecuteCalls = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
@@ -177,6 +176,7 @@ export const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
+            gitExecuteCalls++;
             if (
               editBeforeRemoval &&
               (input.args.includes("remove") || input.args.includes("--porcelain"))
@@ -368,6 +368,7 @@ export const cleanupFixture = (
           },
         }) ?? Effect.void,
       fullStatusCalls: () => fullStatusCalls,
+      gitExecuteCalls: () => gitExecuteCalls,
       snapshotReads: () => snapshotReads,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
