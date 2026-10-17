@@ -47,6 +47,10 @@ const state = vi.hoisted(() => ({
   toasts: [] as string[],
   afterRequest: undefined as ((action: string) => void) | undefined,
   sessionLookupFails: false,
+  vcsKind: "git" as "git" | "jj",
+  statusPending: false,
+  statusRequests: [] as { environmentId: string; input: { cwd: string; includeRemote: boolean } }[],
+  cleanupFailure: null as "removeWorktree" | "refreshStatus" | null,
 }));
 
 vi.mock("react", () => ({
@@ -73,6 +77,9 @@ vi.mock("../state/use-atom-command", () => ({
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
       }
       state.afterRequest?.(action);
+      if (action === state.cleanupFailure) {
+        return AsyncResult.failure(Cause.fail(new Error("Cleanup failed")));
+      }
       return AsyncResult.success(undefined);
     },
 }));
@@ -119,8 +126,27 @@ vi.mock("../state/threads", () => ({
   ),
 }));
 vi.mock("../state/vcs", () => ({
-  vcsEnvironment: { removeWorktree: "removeWorktree", refreshStatus: "refreshStatus" },
+  vcsEnvironment: {
+    status: (target: (typeof state.statusRequests)[number]) => {
+      state.statusRequests.push(target);
+      return "vcsStatus";
+    },
+    removeWorktree: "removeWorktree",
+    refreshStatus: "refreshStatus",
+  },
 }));
+vi.mock("../rpc/atomRegistry", async (importOriginal) => {
+  const { appAtomRegistry } = await importOriginal<typeof import("../rpc/atomRegistry")>();
+  const get = appAtomRegistry.get.bind(appAtomRegistry);
+  // Only the mocked VCS status atom is fake; config and draft atoms stay real.
+  vi.spyOn(appAtomRegistry, "get").mockImplementation(((atom: Parameters<typeof get>[0]) =>
+    (atom as unknown) === "vcsStatus"
+      ? state.statusPending
+        ? AsyncResult.initial()
+        : AsyncResult.success({ vcs: { kind: state.vcsKind } })
+      : get(atom)) as typeof get);
+  return { appAtomRegistry };
+});
 vi.mock("../state/entities", () => ({
   readEnvironmentServerConfigLoaded: () => true,
   readThreadShell: (ref: ScopedThreadRef) =>
@@ -275,10 +301,14 @@ beforeEach(() => {
   state.confirm.mockReset().mockResolvedValue(true);
   state.toasts = [];
   state.afterRequest = undefined;
+  state.statusPending = false;
   state.sessionLookupFails = false;
   useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
   useDiffPanelStore.setState(useDiffPanelStore.getInitialState(), true);
   usePreviewMiniPlayerStore.setState(usePreviewMiniPlayerStore.getInitialState(), true);
+  state.vcsKind = "git";
+  state.statusRequests = [];
+  state.cleanupFailure = null;
 });
 
 describe("thread action permissions", () => {
@@ -452,6 +482,62 @@ describe("thread action permissions", () => {
       expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
       expect(state.toasts).toContain("Failed to delete worktree");
       expect(state.localEffects).toContain("clear-terminal-ui");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("resolves cleanup terms per target when one hook deletes Git and jj threads", async () => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.scopes.get(primary)!.add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.threads.push({
+      ...state.threads[0]!,
+      environmentId: primary,
+      worktreePath: "/workspaces/thread",
+    });
+    const actions = useThreadActions();
+    await actions.deleteThread(target);
+    state.vcsKind = "jj";
+    await actions.deleteThread({ ...target, environmentId: primary });
+    expect(state.confirm.mock.calls[0]![0]).toContain("Delete the worktree too?");
+    expect(state.confirm.mock.calls[1]![0]).toContain("Delete the workspace too?");
+    expect(state.statusRequests).toEqual([
+      { environmentId: secondary, input: { cwd: "/worktrees/thread", includeRemote: false } },
+      { environmentId: primary, input: { cwd: "/workspaces/thread", includeRemote: false } },
+    ]);
+  });
+
+  it("does not wait for an uninitialized VCS status before deleting", async () => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.statusPending = true;
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+    expect(state.confirm.mock.calls[0]![0]).toContain("Delete the worktree too?");
+    expect(state.requests.map((request) => request.action)).toContain("delete");
+  });
+
+  it.each([
+    ["removeWorktree", "Failed to delete workspace"],
+    ["refreshStatus", "Workspace deleted, but Jujutsu status refresh failed"],
+  ] as const)("uses jj cleanup terms when %s fails", async (failure, title) => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/workspaces/thread";
+    state.vcsKind = "jj";
+    state.cleanupFailure = failure;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+      expect(state.toasts).toContain(title);
     } finally {
       consoleError.mockRestore();
     }

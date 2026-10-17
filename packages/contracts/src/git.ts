@@ -111,7 +111,11 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
-export const VcsBranchStatus = Schema.Struct({ refName: Schema.NullOr(Schema.String) });
+export const VcsBranchStatus = Schema.Struct({
+  refName: Schema.NullOr(Schema.String),
+  /** Present for Jujutsu so passive labels can use its terms without a full status read. */
+  vcs: Schema.optional(Schema.Struct({ kind: Schema.Literal("jj") })),
+});
 export type VcsBranchStatus = typeof VcsBranchStatus.Type;
 
 export const VcsStatusSubscriptionInput = Schema.Struct({

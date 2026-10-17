@@ -611,7 +611,9 @@ describe("VcsStatusBroadcaster", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-jj-no-auto-pull-" });
+      const root = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-jj-no-auto-pull-" }),
+      );
       // Detection only needs the marker; no jj process or initialized repository is required.
       yield* fileSystem.makeDirectory(path.join(root, ".jj"));
       const driver = yield* JjVcsDriver.JjVcsDriver;
@@ -676,6 +678,10 @@ describe("VcsStatusBroadcaster", () => {
         assert.equal(localInvalidationCalls, 2);
         assert.equal(pullCalls, 0);
         assert.equal(status.behindCount, 2);
+        assert.deepEqual(yield* broadcaster.refreshBranchStatus({ cwd: root }), {
+          refName: localStatus.refName,
+          vcs: { kind: "jj" },
+        });
       }).pipe(Effect.provide(layerTest));
     }).pipe(
       Effect.scoped,
