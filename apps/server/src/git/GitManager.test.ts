@@ -51,10 +51,13 @@ import {
   decodeJsonReply,
 } from "@t3tools/provider-core/server/textGenerationOperations";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
+import { unusedJjCheckpoints } from "../vcs/testing/JjTestSupport.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
 import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
@@ -775,7 +778,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             Layer.provide(
               GitWorkflowService.layer.pipe(
                 Layer.provide(Layer.succeed(GitManager.GitManager, manager)),
-                Layer.provide(
+                Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)({})),
+                Layer.provide(JjVcsDriver.layer),
+                Layer.provideMerge(
                   VcsDriverRegistry.layer.pipe(
                     Layer.provide(VcsProjectConfig.layer),
                     Layer.provide(VcsProcess.layer),
@@ -4857,6 +4862,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               ...Context.get(registry, VcsDriverRegistry.VcsDriverRegistry),
               resolve: ({ cwd }) => Effect.succeed(cwd === repoDir ? handle : resolvedHandle),
             }),
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.mock(JjWorkflow.JjWorkflow)({}),
+                Layer.mock(JjVcsDriver.JjVcsDriver)({
+                  checkpoints: unusedJjCheckpoints,
+                  capabilities: {
+                    kind: "jj",
+                    supportsWorktrees: false,
+                    supportsBookmarks: true,
+                    supportsAtomicSnapshot: true,
+                    supportsPushDefaultRemote: false,
+                    ignoreClassifier: "git-compatible-fallback",
+                  },
+                }),
+              ),
+            ),
             Effect.provideService(GitVcsDriver.GitVcsDriver, {
               ...git,
               switchRef: (input) =>

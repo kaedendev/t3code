@@ -10,9 +10,9 @@ import { type VcsError, VcsRepositoryDetectionError } from "@t3tools/contracts";
 export type VcsMarker = "jj" | "git";
 
 export interface VcsMarkerRoot {
-  /** Nearest ancestor of `cwd` (inclusive) holding `.jj` or `.git`. Realpath-normalised. */
+  /** Nearest ancestor of `cwd` (inclusive) holding a jj or Git marker. Realpath-normalised. */
   readonly root: string;
-  /** `"jj"` when that directory holds `.jj` (colocated or not); `"git"` when it holds only `.git`. */
+  /** `"jj"` when that directory holds `.jj`; `"git"` for `.git` or a bare Git directory. */
   readonly marker: VcsMarker;
 }
 
@@ -36,11 +36,27 @@ const isDirectory = (fileSystem: FileSystem.FileSystem, candidate: string) =>
 const exists = (fileSystem: FileSystem.FileSystem, candidate: string) =>
   fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
 
+/** Bare Git directories are ancestry boundaries even though they have no `.git` entry. */
+export const isBareGitRepository = Effect.fn("JjRepo.isBareGitRepository")(function* (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+): Effect.fn.Return<boolean, never> {
+  return (
+    (yield* fileSystem.stat(path.join(root, "HEAD")).pipe(
+      Effect.map((info) => info.type === "File"),
+      Effect.orElseSucceed(() => false),
+    )) &&
+    (yield* isDirectory(fileSystem, path.join(root, "objects"))) &&
+    (yield* isDirectory(fileSystem, path.join(root, "refs")))
+  );
+});
+
 /**
- * Walks up from `cwd` to the first directory holding `.jj` or `.git`, with no subprocess. A nearer
- * `.git` outranks a `.jj` further up, so a git worktree nested in a jj repo keeps its own driver.
- * `null` when `cwd` does not exist (a deleted thread directory must not walk into an unrelated repo
- * above it) or when neither marker is found.
+ * Walks up from `cwd` to the first directory holding `.jj`, `.git`, or a bare Git directory, with no
+ * subprocess. A nearer Git repository outranks a `.jj` further up, so no operation reaches across
+ * into the outer workspace. `null` when `cwd` does not exist (a deleted thread directory must not
+ * walk into an unrelated repo above it) or when neither marker is found.
  */
 export const findVcsMarkerRoot = Effect.fn("JjRepo.findVcsMarkerRoot")(function* (
   fileSystem: FileSystem.FileSystem,
@@ -58,6 +74,9 @@ export const findVcsMarkerRoot = Effect.fn("JjRepo.findVcsMarkerRoot")(function*
       return { root: current, marker: "jj" };
     }
     if (yield* exists(fileSystem, path.join(current, ".git"))) {
+      return { root: current, marker: "git" };
+    }
+    if (yield* isBareGitRepository(fileSystem, path, current)) {
       return { root: current, marker: "git" };
     }
 

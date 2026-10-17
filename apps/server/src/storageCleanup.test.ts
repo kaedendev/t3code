@@ -1,5 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as Digest from "effect/crypto/Digest";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -602,6 +605,9 @@ const runCleanupTest = <A, E>(
     | GitVcsDriver.GitVcsDriver
     | Path.Path
     | Scope.Scope
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Digest.Digest
+    | SecureRandom.SecureRandom
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
 
@@ -1551,6 +1557,36 @@ describe("deleted thread worktrees", () => {
 });
 
 describe("orphan worktree reports", () => {
+  it.live("does not probe jj markers for Git orphan worktrees", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const probes: string[] = [];
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            exists: (candidate) => {
+              if (candidate.includes("/.jj")) probes.push(candidate);
+              return fs.exists(candidate);
+            },
+          }),
+        );
+        fixture.setThreads([]);
+        const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
+        yield* fs.utimes(orphan, 1, 1);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: orphan,
+            outcome: "kept",
+            reason: "No thread uses this worktree",
+          }),
+        ]);
+        expect(probes).toEqual([]);
+      }),
+    ),
+  );
+
   it.live("keeps orphan results visible when thread results fill the report", () =>
     runCleanupTest(
       Effect.gen(function* () {
