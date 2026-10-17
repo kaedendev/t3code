@@ -1616,6 +1616,21 @@ export const make = Effect.gen(function* () {
     const { candidates: raw, truncated } = yield* collectCandidates();
     cachedCandidates = raw;
 
+    // Resolve persisted roots too. A project and a transcript can name
+    // different symlinks to the same directory.
+    const importedProjects = yield* projectStore
+      .listShells()
+      .pipe(
+        Effect.mapError(
+          (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+        ),
+      );
+    const importedProjectsByRoot = new Map<string, (typeof importedProjects)[number]>();
+    for (const project of importedProjects) {
+      const projectRoot = path.resolve(expandHomePath(project.workspaceRoot, homeDir));
+      importedProjectsByRoot.set(normalizeProjectPathForComparison(projectRoot), project);
+      importedProjectsByRoot.set(yield* directoryIdentity(projectRoot), project);
+    }
     const merged = new Map<
       string,
       {
@@ -1628,6 +1643,8 @@ export const make = Effect.gen(function* () {
     >();
     // Resolve every candidate directory first so one batch reads all git identities.
     const directories = new Map<string, Option.Option<FileSystem.File.Info>>();
+    // A secondary jj workspace reads its identity from the main workspace.
+    const identityDirectories = new Map<string, string>();
     for (const candidate of raw) {
       const expanded = expandHomePath(candidate.cwd.trim(), homeDir);
       if (!path.isAbsolute(expanded)) continue;
@@ -1642,11 +1659,31 @@ export const make = Effect.gen(function* () {
         .realPath(resolved)
         .pipe(Effect.orElseSucceed(() => resolved));
       // Symlinks can disguise excluded worktree paths; re-check their targets.
-      directories.set(resolved, isExcludedProjectPath(realPath) ? Option.none() : stats);
+      if (isExcludedProjectPath(realPath)) {
+        directories.set(resolved, Option.none());
+        continue;
+      }
+      const handle = yield* vcsRegistry
+        .detect({ cwd: realPath, jjOnly: true })
+        .pipe(Effect.orElseSucceed(() => null));
+      const jjPaths =
+        handle?.kind === "jj"
+          ? yield* resolveJjRepoPaths(fileSystem, path, handle.repository.rootPath).pipe(
+              Effect.orElseSucceed(() => null),
+            )
+          : null;
+      if (jjPaths !== null && jjPaths.workspaceRoot !== jjPaths.mainWorkspaceRoot) {
+        if (!importedProjectsByRoot.has(yield* directoryIdentity(realPath))) {
+          directories.set(resolved, Option.none());
+          continue;
+        }
+        identityDirectories.set(resolved, jjPaths.mainWorkspaceRoot);
+      }
+      directories.set(resolved, stats);
     }
     const directoryGitIdentities = yield* readGitIdentities(
       Array.from(directories).flatMap(([directory, stats]) =>
-        Option.isSome(stats) ? [directory] : [],
+        Option.isSome(stats) ? [identityDirectories.get(directory) ?? directory] : [],
       ),
     );
 
@@ -1661,7 +1698,9 @@ export const make = Effect.gen(function* () {
       if (stats === undefined || Option.isNone(stats)) continue;
       let key = directoryKeys.get(resolved);
       if (key === undefined) {
-        const gitIdentity = directoryGitIdentities.get(resolved);
+        const gitIdentity = directoryGitIdentities.get(
+          identityDirectories.get(resolved) ?? resolved,
+        );
         if (gitIdentity === undefined || gitIdentity._tag === "Worktree") {
           key = "";
         } else {
@@ -1691,21 +1730,6 @@ export const make = Effect.gen(function* () {
         existing.lastActiveAtMs === null || candidate.lastActiveAtMs === null
           ? (existing.lastActiveAtMs ?? candidate.lastActiveAtMs)
           : Math.max(existing.lastActiveAtMs, candidate.lastActiveAtMs);
-    }
-
-    // Resolve persisted roots too; transcripts may use different symlinks to the same directory.
-    const importedProjects = yield* projectStore
-      .listShells()
-      .pipe(
-        Effect.mapError(
-          (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
-        ),
-      );
-    const importedProjectsByRoot = new Map<string, (typeof importedProjects)[number]>();
-    for (const project of importedProjects) {
-      const projectRoot = path.resolve(expandHomePath(project.workspaceRoot, homeDir));
-      importedProjectsByRoot.set(normalizeProjectPathForComparison(projectRoot), project);
-      importedProjectsByRoot.set(yield* directoryIdentity(projectRoot), project);
     }
 
     const candidates: Array<AgentSessionProjectCandidate> = [];
