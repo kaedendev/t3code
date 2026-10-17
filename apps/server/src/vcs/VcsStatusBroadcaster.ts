@@ -854,13 +854,17 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  const branchVcs = (cwd: string) =>
+    detectStatusRepository(cwd).pipe(
+      Effect.map((handle) => (handle?.kind === "jj" ? { vcs: { kind: "jj" as const } } : {})),
+    );
+
   const refreshBranchStatus: VcsStatusBroadcaster["Service"]["refreshBranchStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshBranchStatus",
   )(function* (input) {
-    const { refName } = yield* refreshBranchStatusCore(
-      yield* withFileSystem(normalizeCwd(input.cwd)),
-    );
-    return { refName };
+    const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    const { refName } = yield* refreshBranchStatusCore(cwd);
+    return { refName, ...(yield* branchVcs(cwd)) };
   });
 
   const streamBranchStatus: VcsStatusBroadcaster["Service"]["streamBranchStatus"] = (input) =>
@@ -869,11 +873,12 @@ export const make = Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(branchChangesPubSub);
         const branch = yield* refreshBranchStatusCore(cwd);
+        const vcs = yield* branchVcs(cwd);
         return Stream.concat(
-          Stream.make({ refName: branch.refName }),
+          Stream.make({ refName: branch.refName, ...vcs }),
           Stream.fromSubscription(subscription).pipe(
             Stream.filter((event) => event.cwd === cwd && event.revision > branch.revision),
-            Stream.map(({ refName }) => ({ refName })),
+            Stream.map(({ refName }) => ({ refName, ...vcs })),
           ),
         ).pipe(Stream.changesWith((left, right) => left.refName === right.refName));
       }),

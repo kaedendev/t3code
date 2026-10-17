@@ -61,6 +61,7 @@ import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
@@ -492,6 +493,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       Layer.mergeAll(
         Layer.mock(GitWorkflowService.GitWorkflowService)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({ detect: () => Effect.succeed(null) }),
       ),
     ),
     Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
@@ -623,6 +625,7 @@ const makeLaptop = (
         Layer.mergeAll(
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
           Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+          Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({ detect: () => Effect.succeed(null) }),
         ),
       ),
       Layer.fresh,

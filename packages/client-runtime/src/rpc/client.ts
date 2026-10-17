@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type ClientGuardedRpcTag,
   ORCHESTRATION_V2_WS_METHODS,
+  type VcsBranchStatus,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -476,7 +477,10 @@ export const subscribeVcsBranch = (
                   includeRemote: false,
                 }).pipe(
                   Stream.filter((event) => event._tag !== "remoteUpdated"),
-                  Stream.map((event) => ({ refName: event.local.refName })),
+                  Stream.map((event): VcsBranchStatus => ({
+                    refName: event.local.refName,
+                    ...(event.local.vcs?.kind === "jj" ? { vcs: { kind: "jj" } } : {}),
+                  })),
                 ),
           ),
         ),
