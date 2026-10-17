@@ -71,6 +71,7 @@ function RestoreBranchHarness(props: {
     environmentId,
     currentRouteThreadKeyRef: props.currentRouteThreadKeyRef,
     canOperateThread: true,
+    vcsActionsSupported: true,
     clientSettingsHydrated: true,
     activeThreadShell: null,
     activeLatestRun: null as never,
