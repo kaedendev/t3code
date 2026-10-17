@@ -18,6 +18,7 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import * as SourceControlProviderRegistry from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { isJjVersionSupported, parseJjVersion } from "../JjAvailability.ts";
 import * as JjVcsDriver from "../JjVcsDriver.ts";
+import type * as VcsDriver from "../VcsDriver.ts";
 import * as VcsProcess from "../VcsProcess.ts";
 
 const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
@@ -221,3 +222,13 @@ export const stubSourceControlProviders =
       }),
     ),
   );
+
+/** For driver mocks whose test never reaches checkpointing. */
+export const unusedJjCheckpoints: VcsDriver.VcsCheckpointOps = {
+  captureCheckpoint: () => Effect.die("unexpected captureCheckpoint"),
+  hasCheckpointRef: () => Effect.die("unexpected hasCheckpointRef"),
+  restoreCheckpoint: () => Effect.die("unexpected restoreCheckpoint"),
+  diffCheckpoints: () => Effect.die("unexpected diffCheckpoints"),
+  listAuthoredPaths: () => Effect.die("unexpected listAuthoredPaths"),
+  deleteCheckpointRefs: () => Effect.die("unexpected deleteCheckpointRefs"),
+};
