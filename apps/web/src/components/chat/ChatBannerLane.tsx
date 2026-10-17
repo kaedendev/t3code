@@ -1,3 +1,4 @@
+import { VcsFallbackNotice } from "../VcsFallbackNotice";
 import type {
   EnvironmentId,
   OrchestrationV2ProviderFailureClass,
@@ -15,6 +16,12 @@ import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadE
  */
 export function ChatBannerLane(props: {
   environmentId: EnvironmentId;
+  vcsFallbackNotice: {
+    environmentId: string;
+    repository: string;
+    notice: string | null;
+    reason: string | null;
+  } | null;
   vcsUnsupportedReason: string | null;
   providerStatus: ServerProvider | null;
   providerStatusBannerKey: string | null;
@@ -43,6 +50,7 @@ export function ChatBannerLane(props: {
   } = props;
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
+      {props.vcsFallbackNotice ? <VcsFallbackNotice {...props.vcsFallbackNotice} /> : null}
       {props.vcsUnsupportedReason ? (
         <div
           role="alert"

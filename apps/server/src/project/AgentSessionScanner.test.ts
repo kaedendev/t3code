@@ -871,6 +871,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({
           claudeHomePath,
           codexHomePath,
+          importedWorkspaceRoots: [workspace],
           jjRoot: workspace,
         });
         expect(
