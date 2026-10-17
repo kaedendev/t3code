@@ -3404,6 +3404,19 @@ export default function ChatView(props: ChatViewProps) {
             <ThreadFind onClose={focusComposerStable} />
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
+              vcsFallbackNotice={
+                activeProject
+                  ? {
+                      environmentId,
+                      repository: activeProject.workspaceRoot,
+                      notice:
+                        gitStatusQuery.data?.vcs?.kind === "git"
+                          ? (gitStatusQuery.data.vcs.notice ?? null)
+                          : null,
+                      reason: vcsUnsupportedReason,
+                    }
+                  : null
+              }
               vcsUnsupportedReason={vcsUnsupportedReason}
               providerStatus={visibleProviderStatus}
               providerStatusBannerKey={providerStatusBannerKey}
