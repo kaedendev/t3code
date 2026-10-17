@@ -37,6 +37,7 @@ import { parse as parseYaml } from "yaml";
 import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import { inspectJjStorageCleanup, removeJjStorageCleanup } from "./jj/JjStorageCleanup.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -801,6 +802,7 @@ const make = Effect.gen(function* () {
     const snapshot = yield* readThreads();
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const defaultBranches = new Map<string, string | null>();
+    const refreshedJjDefaults = new Set<string>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
       (thread) => path.resolve(thread.worktreePath!),
@@ -879,31 +881,14 @@ const make = Effect.gen(function* () {
           return keep("outside the managed worktree folder");
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
-        // Git cleanup cannot prove that jj changes are disposable.
-        if (yield* fs.exists(path.join(worktreePath, ".jj"))) {
-          const detected = yield* Effect.flatMap(VcsDriverRegistry.VcsDriverRegistry, (registry) =>
-            registry.detect({ cwd: worktreePath, jjOnly: true }),
-          ).pipe(Effect.provide(cleanupDetectionLayer));
-          if (detected?.kind !== "jj")
-            return keep("Jujutsu metadata is present; automatic Jujutsu cleanup is disabled");
-          return keep("Jujutsu workspace");
-        }
-        if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
-          return keep("not a linked worktree");
-        if (yield* branchChanged(worktreePath, thread.branch))
-          return keep("repository or branch changed");
-        const changes = yield* localChangesReason(worktreePath, settings);
-        if (changes !== null) return keep(changes);
-        if (
-          group.some(
-            (member) =>
-              member.settledAt !== null &&
-              now - Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) <
-                SETTLE_SCRIPT_GRACE_MS,
-          )
-        )
-          return keep(waitForStop("settled moments ago"));
-        const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
+        const hasJjMarker = yield* fs.exists(path.join(worktreePath, ".jj"));
+        const detectedJj = hasJjMarker
+          ? yield* Effect.flatMap(VcsDriverRegistry.VcsDriverRegistry, (registry) =>
+              registry.detect({ cwd: worktreePath, jjOnly: true }),
+            ).pipe(Effect.provide(cleanupDetectionLayer))
+          : null;
+        if (hasJjMarker && detectedJj?.kind !== "jj")
+          return keep("Jujutsu metadata is present; automatic Jujutsu cleanup is disabled");
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
@@ -923,70 +908,138 @@ const make = Effect.gen(function* () {
           : old
             ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} days`
             : `settled for ${settledDays} days`;
+        let jjInspection =
+          detectedJj?.kind === "jj"
+            ? yield* inspectJjStorageCleanup(
+                worktreePath,
+                thread.branch,
+                settings.worktreeKeepWhen,
+                false,
+                defaultBranches,
+                !eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge),
+              )
+            : null;
+        if (jjInspection !== null) {
+          if (jjInspection.reason !== null) return keep(jjInspection.reason);
+        } else {
+          if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
+            return keep("not a linked worktree");
+          if (yield* branchChanged(worktreePath, thread.branch))
+            return keep("repository or branch changed");
+          const changes = yield* localChangesReason(worktreePath, settings);
+          if (changes !== null) return keep(changes);
+        }
+        if (
+          group.some(
+            (member) =>
+              member.settledAt !== null &&
+              now - Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) <
+                SETTLE_SCRIPT_GRACE_MS,
+          )
+        )
+          return keep(waitForStop("settled moments ago"));
+        const head =
+          jjInspection === null
+            ? yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })
+            : { commitSha: jjInspection.commitId };
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
-          const repositoryCwd = path.resolve(project.workspaceRoot);
-          const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
-          const defaultBranchKey = `${repositoryCwd}\0${remote}`;
-          let branch = defaultBranches.get(defaultBranchKey);
-          if (branch === undefined) {
-            branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
-            // Without a local HEAD ref, only the remote can identify its default;
-            // a conventional name may be a feature branch.
-            if (branch === null) {
-              branch = yield* git
-                .execute({
-                  operation: "StorageCleanup.resolveDefaultBranch",
-                  cwd: repositoryCwd,
-                  args: ["ls-remote", "--symref", "--", remote, "HEAD"],
-                  timeoutMs: 20_000,
-                })
-                .pipe(
-                  Effect.map(
-                    (result) =>
-                      /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(result.stdout)?.[1] ?? null,
-                  ),
-                  Effect.orElseSucceed(() => null),
-                );
+          if (jjInspection !== null) {
+            const refreshKey = jjInspection.mainWorkspaceRoot;
+            if (jjInspection.defaultBranch === null) return keep("default branch is unavailable");
+            if (!refreshedJjDefaults.has(refreshKey)) {
+              const inspected = yield* inspectJjStorageCleanup(
+                worktreePath,
+                thread.branch,
+                settings.worktreeKeepWhen,
+                true,
+                defaultBranches,
+              );
+              if (inspected.reason !== null) return keep(inspected.reason);
+              if (inspected.commitId !== head.commitSha) return keep("commit changed since check");
+              jjInspection = inspected;
+              refreshedJjDefaults.add(refreshKey);
             }
-            defaultBranches.set(defaultBranchKey, branch);
-          }
-          if (branch === null) return keep("default branch is unavailable");
-          const defaultRef = `refs/remotes/${remote}/${branch}`;
-          const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-          if (!refreshed.has(defaultRef)) {
-            yield* git.fetchRemoteTrackingBranch({
-              cwd: repositoryCwd,
-              remoteName: remote,
-              remoteBranch: branch,
+            if (jjInspection.defaultBranch === null) return keep("default branch is unavailable");
+            eligible = jjInspection.integrated && settings.worktreeUnchanged;
+            if (eligible) removalReason = "no commits beyond the default branch";
+            if (!eligible && settings.worktreeOnMerge) {
+              const pullRequest = yield* gitManager.branchPullRequest(
+                { cwd: jjInspection.mainWorkspaceRoot, branch: thread.branch },
+                { refresh: true },
+              );
+              eligible = storageCleanupPullRequestMerged(pullRequest, {
+                branch: thread.branch,
+                defaultBranch: jjInspection.defaultBranch,
+                headSha: head.commitSha,
+                integrated: jjInspection.integrated,
+              });
+              if (eligible) removalReason = "pull request was merged";
+            }
+          } else {
+            const repositoryCwd = path.resolve(project.workspaceRoot);
+            const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
+            const defaultBranchKey = `${repositoryCwd}\0${remote}`;
+            let branch = defaultBranches.get(defaultBranchKey);
+            if (branch === undefined) {
+              branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
+              // Without a local HEAD ref, only the remote can identify its default;
+              // a conventional name may be a feature branch.
+              if (branch === null) {
+                branch = yield* git
+                  .execute({
+                    operation: "StorageCleanup.resolveDefaultBranch",
+                    cwd: repositoryCwd,
+                    args: ["ls-remote", "--symref", "--", remote, "HEAD"],
+                    timeoutMs: 20_000,
+                  })
+                  .pipe(
+                    Effect.map(
+                      (result) =>
+                        /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(result.stdout)?.[1] ?? null,
+                    ),
+                    Effect.orElseSucceed(() => null),
+                  );
+              }
+              defaultBranches.set(defaultBranchKey, branch);
+            }
+            if (branch === null) return keep("default branch is unavailable");
+            const defaultRef = `refs/remotes/${remote}/${branch}`;
+            const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
+            if (!refreshed.has(defaultRef)) {
+              yield* git.fetchRemoteTrackingBranch({
+                cwd: repositoryCwd,
+                remoteName: remote,
+                remoteBranch: branch,
+              });
+              refreshed.add(defaultRef);
+              refreshedDefaultRefs.set(repositoryCwd, refreshed);
+            }
+            const base = yield* git.resolveCommit({
+              cwd: worktreePath,
+              revision: defaultRef,
             });
-            refreshed.add(defaultRef);
-            refreshedDefaultRefs.set(repositoryCwd, refreshed);
-          }
-          const base = yield* git.resolveCommit({
-            cwd: worktreePath,
-            revision: defaultRef,
-          });
-          const ancestor = yield* git.execute({
-            operation: "StorageCleanup.integratedBranch",
-            cwd: worktreePath,
-            args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-            allowNonZeroExit: true,
-          });
-          const integrated = ancestor.exitCode === 0;
-          eligible = integrated && settings.worktreeUnchanged;
-          if (eligible) removalReason = "no commits beyond the default branch";
-          if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
-            const pullRequest = yield* gitManager.branchPullRequest(
-              { cwd: worktreePath, branch: thread.branch },
-              { refresh: true },
-            );
-            eligible = storageCleanupPullRequestMerged(pullRequest, {
-              branch: thread.branch,
-              defaultBranch: branch,
-              headSha: head.commitSha,
-              integrated,
+            const ancestor = yield* git.execute({
+              operation: "StorageCleanup.integratedBranch",
+              cwd: worktreePath,
+              args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
+              allowNonZeroExit: true,
             });
-            if (eligible) removalReason = "pull request was merged";
+            const integrated = ancestor.exitCode === 0;
+            eligible = integrated && settings.worktreeUnchanged;
+            if (eligible) removalReason = "no commits beyond the default branch";
+            if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
+              const pullRequest = yield* gitManager.branchPullRequest(
+                { cwd: worktreePath, branch: thread.branch },
+                { refresh: true },
+              );
+              eligible = storageCleanupPullRequestMerged(pullRequest, {
+                branch: thread.branch,
+                defaultBranch: branch,
+                headSha: head.commitSha,
+                integrated,
+              });
+              if (eligible) removalReason = "pull request was merged";
+            }
           }
         }
         if (!eligible)
@@ -1073,15 +1126,21 @@ const make = Effect.gen(function* () {
         const bytes = yield* measureWorktree(worktreePath);
         const blockedWhileMeasuring = yield* blockedSinceCheck();
         if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
-        if (yield* branchChanged(worktreePath, thread.branch))
-          return keep("repository or branch changed since check");
-        if (
-          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-          head.commitSha
-        )
-          return keep("commit changed since check");
-        const finalChanges = yield* localChangesReason(worktreePath, settings);
-        if (finalChanges !== null) return keep(finalChanges);
+        if (jjInspection !== null) {
+          const finalPath = yield* fs.realPath(worktreePath);
+          if (finalPath !== realPath || !roots.some((root) => inside(root, finalPath)))
+            return keep("workspace path changed since check");
+        } else {
+          if (yield* branchChanged(worktreePath, thread.branch))
+            return keep("repository or branch changed since check");
+          if (
+            (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+            head.commitSha
+          )
+            return keep("commit changed since check");
+          const finalChanges = yield* localChangesReason(worktreePath, settings);
+          if (finalChanges !== null) return keep(finalChanges);
+        }
         const currentSettings = yield* settingsService.getSettings;
         const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
         if (
@@ -1093,24 +1152,34 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
-        if (settings.worktreeKeepWhen === "tracked-changes")
-          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-        const submodules = yield* submoduleRemoval(worktreePath, settings);
-        if (submodules.reason !== null) return keep(submodules.reason);
-        if (submodules.force) {
-          const changes = yield* localChangesReason(worktreePath, settings);
-          if (changes !== null) return keep(changes);
+        if (jjInspection !== null) {
+          const reason = yield* removeJjStorageCleanup(
+            worktreePath,
+            thread.branch,
+            jjInspection.commitId,
+            settings.worktreeKeepWhen,
+          );
+          if (reason !== null) return keep(reason);
+        } else {
+          // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
+          if (settings.worktreeKeepWhen === "tracked-changes")
+            yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+          const submodules = yield* submoduleRemoval(worktreePath, settings);
+          if (submodules.reason !== null) return keep(submodules.reason);
+          if (submodules.force) {
+            const changes = yield* localChangesReason(worktreePath, settings);
+            if (changes !== null) return keep(changes);
+          }
+          yield* removeLinkedWorktree({
+            operation: "StorageCleanup.cleanupGit",
+            cwd: project.workspaceRoot,
+            worktreePath,
+            // Git requires force for submodules; recursive checks above cannot make removal atomic.
+            force: submodules.force,
+            execute: git.execute,
+            run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+          });
         }
-        yield* removeLinkedWorktree({
-          operation: "StorageCleanup.cleanupGit",
-          cwd: project.workspaceRoot,
-          worktreePath,
-          // Git requires force for submodules; recursive checks above cannot make removal atomic.
-          force: submodules.force,
-          execute: git.execute,
-          run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
-        });
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
