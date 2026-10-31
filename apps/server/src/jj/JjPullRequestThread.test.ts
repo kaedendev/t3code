@@ -488,6 +488,65 @@ describeJj("JjPullRequestThread worktree mode", () => {
     ),
   );
 
+  it.effect("refuses to move a local bookmark that diverged from the pull ref", () =>
+    withRepo(
+      { summary: changeRequest({ headRefName: "feature" }) },
+      ({ driver, fileSystem, ops, path, remotePath, root }) =>
+        Effect.gen(function* () {
+          yield* fileSystem.writeFileString(path.join(root, "user.txt"), "unpublished\n");
+          yield* runJj(root, ["commit", "-m", "unpublished user commit"]);
+          yield* runJj(root, ["bookmark", "create", "feature", "-r", "@-"]);
+          const userCommit = (yield* driver.changeAt(root, "@-"))?.commitId;
+          yield* runJj(root, ["new", "main"]);
+          yield* fileSystem.writeFileString(path.join(root, "pr.txt"), "pr\n");
+          yield* runJj(root, ["commit", "-m", "pr work"]);
+          const prHead = (yield* driver.changeAt(root, "@-"))?.commitId;
+          yield* runGit(root, ["push", remotePath, `${prHead}:refs/pull/7/head`]);
+          yield* runJj(root, ["abandon", "@-"]);
+
+          const failure = yield* ops
+            .preparePullRequestThread({ cwd: root, reference: "7", mode: "worktree" })
+            .pipe(Effect.flip);
+
+          assert.include(failure.message, "diverged");
+          assert.equal(
+            (yield* driver.changeAt(root, 'bookmarks(exact:"feature")'))?.commitId,
+            userCommit,
+          );
+          assert.notInclude(
+            yield* runGit(root, ["for-each-ref", "--format=%(refname)", "refs/heads"]),
+            "t3code/import",
+          );
+        }),
+    ),
+  );
+
+  it.effect("fast-forwards a local bookmark the pull ref descends from", () =>
+    withRepo(
+      { summary: changeRequest({ headRefName: "feature" }) },
+      ({ driver, fileSystem, ops, path, remotePath, root }) =>
+        Effect.gen(function* () {
+          yield* runJj(root, ["bookmark", "create", "feature", "-r", "main"]);
+          yield* fileSystem.writeFileString(path.join(root, "pr.txt"), "pr\n");
+          yield* runJj(root, ["commit", "-m", "pr work"]);
+          const prHead = (yield* driver.changeAt(root, "@-"))?.commitId;
+          yield* runGit(root, ["push", remotePath, `${prHead}:refs/pull/7/head`]);
+
+          const prepared = yield* ops.preparePullRequestThread({
+            cwd: root,
+            reference: "7",
+            mode: "worktree",
+          });
+
+          assert.isTrue(prepared.isOnPullRequestHead);
+          assert.equal(
+            (yield* driver.changeAt(root, 'bookmarks(exact:"feature")'))?.commitId,
+            prHead,
+          );
+        }),
+    ),
+  );
+
   it.effect("fetches an open same-repository head by name when no pull ref exists", () =>
     withRepo(
       {
