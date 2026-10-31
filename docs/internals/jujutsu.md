@@ -54,7 +54,9 @@ import also brings in refs the user moved meanwhile. Cleanup also runs if import
 attempted, and the primary failure plus all cleanup failures are retained in the returned cause.
 See [`JjCheckpoints.ts`](../../apps/server/src/vcs/JjCheckpoints.ts).
 
-Capture snapshots `@` and pins its object. Checkpoint restore uses `jj restore`, not `git reset`,
+Capture snapshots `@` and pins its whole tree. Restore and diff are scoped to the project
+directory, as Git's are, so a project rooted below the repository root never reverts or reports
+files elsewhere in it. Checkpoint restore uses `jj restore`, not `git reset`,
 `git clean` or `git restore`, so the change id, description, bookmarks and other workspaces
 survive. Ordinary restores can be undone with `jj undo`; recovery also records import and cleanup
 operations, so use the operation log to select the restore when undoing recovery. Checkpoint code
@@ -69,7 +71,7 @@ use the same Git patch and rename-aware NUL-delimited numstat path as other capt
 
 The upstream checkpoint pipeline can filter turn diffs to authored paths without narrowing the saved checkpoint. jj implements `listAuthoredPaths` in [`JjCheckpoints.ts`](../../apps/server/src/vcs/JjCheckpoints.ts): it combines working-copy edits at both ends with paths from relevant parent history, using the starting checkpoint's reflog timestamp rather than the jj commit timestamp as capture time. That keeps imported history from becoming the turn's own work.
 
-Ambiguous ancestry, unchanged parents or older refs without capture-time metadata return `null` instead of guessing an authored-path set. Diff filtering is optional; restore always uses the full captured workspace.
+Ambiguous ancestry, unchanged parents or older refs without capture-time metadata return `null` instead of guessing an authored-path set. Diff filtering is optional; restore always uses the full captured project directory.
 
 ## Root is never a revision
 
