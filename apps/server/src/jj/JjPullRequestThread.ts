@@ -149,6 +149,68 @@ export const makeJjPullRequestThread = (deps: JjPullRequestThreadDeps): JjPullRe
             )
           : Effect.succeed(ref);
       });
+      /**
+       * Fetches the head into a temporary ref and moves `localBranch` only forward onto it, as
+       * a fetch into the bookmark's own ref would move it over unpublished local commits.
+       */
+      const adoptFetchedHead = Effect.fn("JjPullRequestThread.adoptFetchedHead")(function* <E>(
+        fetchInto: (temporaryRef: string) => Effect.Effect<boolean, E>,
+        refuseDivergent: boolean,
+      ) {
+        const temporaryBookmark = `t3code/import/${(yield* Random.nextInt).toString(36)}${(yield* Random.nextInt).toString(36)}`;
+        const temporaryRef = `refs/heads/${temporaryBookmark}`;
+        const fetched = localBookmarkRevset(temporaryBookmark);
+        const local = localBookmarkRevset(localBranch);
+        return yield* Effect.gen(function* () {
+          if (!(yield* fetchInto(temporaryRef))) return null;
+          yield* run(operation, input.cwd, ["git", "import"], {
+            timeoutMs: FETCH_TIMEOUT_MS,
+          }).pipe(mapJjFailure(operation, input.cwd, "Could not import the pull request head."));
+          const headCommitId =
+            (yield* driver
+              .changeAt(input.cwd, fetched)
+              .pipe(mapJjFailure(operation, input.cwd, "Could not read the pull request head.")))
+              ?.commitId ?? null;
+          const existingHead = yield* driver
+            .changeAt(input.cwd, local)
+            .pipe(
+              mapJjFailure(operation, input.cwd, "Could not read the local pull-request head."),
+            );
+          const contains = (ancestor: string, descendant: string) =>
+            driver.countRevset(input.cwd, `${ancestor} & ::(${descendant})`).pipe(
+              Effect.map((count) => count > 0),
+              mapJjFailure(operation, input.cwd, "Could not compare pull-request heads."),
+            );
+          if (existingHead === null || (yield* contains(local, fetched))) {
+            yield* run(operation, input.cwd, [
+              "bookmark",
+              existingHead === null ? "create" : "set",
+              localBranch,
+              "-r",
+              fetched,
+            ]).pipe(
+              mapJjFailure(operation, input.cwd, "Could not update the local pull-request head."),
+            );
+          } else if (refuseDivergent && !(yield* contains(fetched, local))) {
+            return yield* jjFailure(
+              operation,
+              input.cwd,
+              `The local bookmark ${localBranch} has diverged from the pull request head. Rename or move it, then open the pull request again.`,
+            );
+          }
+          return headCommitId;
+        }).pipe(
+          Effect.ensuring(
+            JjProcess.colocatedGitCommand(
+              process,
+              operation,
+              { gitDir: paths.gitDir, cwd: hostingCwd },
+              ["update-ref", "-d", temporaryRef],
+            ).pipe(Effect.andThen(run(operation, input.cwd, ["git", "import"])), Effect.ignore),
+          ),
+        );
+      });
+
       let sourceHeadCommitId: string | null = null;
       const importedSource = sourceRepository
         ? yield* Effect.gen(function* () {
@@ -169,9 +231,7 @@ export const makeJjPullRequestThread = (deps: JjPullRequestThreadDeps): JjPullRe
               remoteUrl:
                 primaryUrl && isSshRemoteUrl(primaryUrl) ? cloneUrls.sshUrl : cloneUrls.url,
             });
-            const temporaryBookmark = `t3code/import/${(yield* Random.nextInt).toString(36)}${(yield* Random.nextInt).toString(36)}`;
-            const temporaryRef = `refs/heads/${temporaryBookmark}`;
-            const fetch = (remote: string, sourceRef: string) =>
+            const fetch = (temporaryRef: string, remote: string, sourceRef: string) =>
               JjProcess.colocatedGitCommand(
                 process,
                 operation,
@@ -179,86 +239,37 @@ export const makeJjPullRequestThread = (deps: JjPullRequestThreadDeps): JjPullRe
                 ["fetch", "--refmap=", "--", remote, `+${sourceRef}:${temporaryRef}`],
                 { timeoutMs: FETCH_TIMEOUT_MS },
               );
-            yield* Effect.gen(function* () {
-              yield* fetch(sourceRemote, `refs/heads/${pullRequest.headBranch}`).pipe(
-                Effect.catch((primaryCause) =>
-                  (remoteName === null
-                    ? Effect.fail(primaryCause)
-                    : changeRequestHeadRef.pipe(Effect.flatMap((ref) => fetch(remoteName, ref)))
-                  ).pipe(
-                    Effect.mapError(
-                      (fallbackCause) =>
-                        new GitPullRequestMaterializationError({
-                          cwd: input.cwd,
-                          pullRequestNumber: pullRequest.number,
-                          headRepository: sourceRepository,
-                          headBranch: pullRequest.headBranch,
-                          localBranch,
-                          cause: new AggregateError(
-                            [primaryCause, fallbackCause],
-                            `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
-                            { cause: primaryCause },
-                          ),
-                        }),
+            sourceHeadCommitId = yield* adoptFetchedHead(
+              (temporaryRef) =>
+                fetch(temporaryRef, sourceRemote, `refs/heads/${pullRequest.headBranch}`).pipe(
+                  Effect.catch((primaryCause) =>
+                    (remoteName === null
+                      ? Effect.fail(primaryCause)
+                      : changeRequestHeadRef.pipe(
+                          Effect.flatMap((ref) => fetch(temporaryRef, remoteName, ref)),
+                        )
+                    ).pipe(
+                      Effect.mapError(
+                        (fallbackCause) =>
+                          new GitPullRequestMaterializationError({
+                            cwd: input.cwd,
+                            pullRequestNumber: pullRequest.number,
+                            headRepository: sourceRepository,
+                            headBranch: pullRequest.headBranch,
+                            localBranch,
+                            cause: new AggregateError(
+                              [primaryCause, fallbackCause],
+                              `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
+                              { cause: primaryCause },
+                            ),
+                          }),
+                      ),
                     ),
                   ),
+                  Effect.as(true),
                 ),
-              );
-              yield* run(operation, input.cwd, ["git", "import"], {
-                timeoutMs: FETCH_TIMEOUT_MS,
-              }).pipe(
-                mapJjFailure(operation, input.cwd, "Could not import the source repository head."),
-              );
-              sourceHeadCommitId =
-                (yield* driver
-                  .changeAt(input.cwd, localBookmarkRevset(temporaryBookmark))
-                  .pipe(
-                    mapJjFailure(
-                      operation,
-                      input.cwd,
-                      "Could not read the source pull-request head.",
-                    ),
-                  ))?.commitId ?? null;
-              const existingHead = yield* driver
-                .changeAt(input.cwd, localBookmarkRevset(localBranch))
-                .pipe(
-                  mapJjFailure(operation, input.cwd, "Could not read the local pull-request head."),
-                );
-              const canAdvance =
-                existingHead === null
-                  ? true
-                  : (yield* driver
-                      .countRevset(
-                        input.cwd,
-                        `${localBookmarkRevset(localBranch)} & ::(${localBookmarkRevset(temporaryBookmark)})`,
-                      )
-                      .pipe(
-                        mapJjFailure(operation, input.cwd, "Could not compare pull-request heads."),
-                      )) > 0;
-              if (canAdvance) {
-                yield* run(operation, input.cwd, [
-                  "bookmark",
-                  existingHead === null ? "create" : "set",
-                  localBranch,
-                  "-r",
-                  localBookmarkRevset(temporaryBookmark),
-                ]).pipe(
-                  mapJjFailure(
-                    operation,
-                    input.cwd,
-                    "Could not update the local pull-request head.",
-                  ),
-                );
-              }
-            }).pipe(
-              Effect.ensuring(
-                JjProcess.colocatedGitCommand(
-                  process,
-                  operation,
-                  { gitDir: paths.gitDir, cwd: hostingCwd },
-                  ["update-ref", "-d", temporaryRef],
-                ).pipe(Effect.andThen(run(operation, input.cwd, ["git", "import"])), Effect.ignore),
-              ),
+              // The alias is T3's own, so local work on it stays checked out instead.
+              false,
             );
             // Import only the alias: a fork's head can be main, which must not move local main.
             yield* writeBookmarkUpstreamConfig(process, {
@@ -301,9 +312,7 @@ export const makeJjPullRequestThread = (deps: JjPullRequestThreadDeps): JjPullRe
           name: pullRequest.headBranch,
         });
       } else if (!importedSource) {
-        // `jj git fetch` cannot take an arbitrary refspec. Forced refspecs can move a local
-        // ref backwards, when jj's default would abandon commits during the import; the global
-        // config prevents that.
+        // `jj git fetch` cannot take an arbitrary refspec, so Git fetches into a temporary ref.
         if (remoteName === null) {
           return yield* jjFailure(
             operation,
@@ -311,67 +320,70 @@ export const makeJjPullRequestThread = (deps: JjPullRequestThreadDeps): JjPullRe
             "This repository has no remote to fetch from.",
           );
         }
-        yield* changeRequestHeadRef.pipe(
-          Effect.flatMap((ref) =>
-            JjProcess.colocatedGitCommand(
-              process,
-              operation,
-              { gitDir: paths.gitDir, cwd: paths.mainWorkspaceRoot },
-              ["fetch", "--", remoteName, `+${ref}:refs/heads/${localBranch}`],
-              { timeoutMs: FETCH_TIMEOUT_MS },
+        sourceHeadCommitId = yield* adoptFetchedHead(
+          (temporaryRef) =>
+            changeRequestHeadRef.pipe(
+              Effect.flatMap((ref) =>
+                JjProcess.colocatedGitCommand(
+                  process,
+                  operation,
+                  { gitDir: paths.gitDir, cwd: paths.mainWorkspaceRoot },
+                  ["fetch", "--refmap=", "--", remoteName, `+${ref}:${temporaryRef}`],
+                  { timeoutMs: FETCH_TIMEOUT_MS },
+                ),
+              ),
+              Effect.as(true),
+              Effect.catch((cause) =>
+                summary.isCrossRepository === true || pullRequest.state !== "open"
+                  ? Effect.fail(cause)
+                  : Effect.gen(function* () {
+                      const remote = yield* JjProcess.colocatedGitCommand(
+                        process,
+                        operation,
+                        { gitDir: paths.gitDir, cwd: paths.mainWorkspaceRoot },
+                        ["config", "--get", `remote.${remoteName}.url`],
+                      );
+                      const remoteUrl = remote.stdout.trim();
+                      const pullRequestKey = pullRequestRepositoryKey(pullRequest.url);
+                      if (
+                        remoteUrl.length === 0 ||
+                        pullRequestKey === null ||
+                        sourceControlDefinitions.canonicalRepositoryKey(pullRequestKey) !==
+                          sourceControlDefinitions.canonicalRepositoryKey(
+                            sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
+                          )
+                      ) {
+                        return yield* cause;
+                      }
+                      // Some hosts publish no pull ref. Only an open PR in this repository can
+                      // safely use its named branch: a closed head may have moved since closing.
+                      yield* run(
+                        operation,
+                        input.cwd,
+                        [
+                          "git",
+                          "fetch",
+                          "--remote",
+                          exactStringPattern(remoteName),
+                          "--branch",
+                          exactStringPattern(pullRequest.headBranch),
+                        ],
+                        { timeoutMs: FETCH_TIMEOUT_MS },
+                      );
+                      yield* trackRemoteBookmark({
+                        process,
+                        operation,
+                        cwd: input.cwd,
+                        gitDir: paths.gitDir,
+                        remoteName,
+                        name: pullRequest.headBranch,
+                      });
+                      return false;
+                    }),
+              ),
+              mapJjFailure(operation, input.cwd, "Could not fetch the pull request head."),
             ),
-          ),
-          Effect.catch((cause) =>
-            summary.isCrossRepository === true || pullRequest.state !== "open"
-              ? Effect.fail(cause)
-              : Effect.gen(function* () {
-                  const remote = yield* JjProcess.colocatedGitCommand(
-                    process,
-                    operation,
-                    { gitDir: paths.gitDir, cwd: paths.mainWorkspaceRoot },
-                    ["config", "--get", `remote.${remoteName}.url`],
-                  );
-                  const remoteUrl = remote.stdout.trim();
-                  const pullRequestKey = pullRequestRepositoryKey(pullRequest.url);
-                  if (
-                    remoteUrl.length === 0 ||
-                    pullRequestKey === null ||
-                    sourceControlDefinitions.canonicalRepositoryKey(pullRequestKey) !==
-                      sourceControlDefinitions.canonicalRepositoryKey(
-                        sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
-                      )
-                  ) {
-                    return yield* cause;
-                  }
-                  // Some hosts publish no pull ref. Only an open PR in this repository can
-                  // safely use its named branch: a closed head may have moved since closing.
-                  yield* run(
-                    operation,
-                    input.cwd,
-                    [
-                      "git",
-                      "fetch",
-                      "--remote",
-                      exactStringPattern(remoteName),
-                      "--branch",
-                      exactStringPattern(pullRequest.headBranch),
-                    ],
-                    { timeoutMs: FETCH_TIMEOUT_MS },
-                  );
-                  yield* trackRemoteBookmark({
-                    process,
-                    operation,
-                    cwd: input.cwd,
-                    gitDir: paths.gitDir,
-                    remoteName,
-                    name: pullRequest.headBranch,
-                  });
-                }),
-          ),
-          mapJjFailure(operation, input.cwd, "Could not fetch the pull request head."),
-        );
-        yield* run(operation, input.cwd, ["git", "import"], { timeoutMs: FETCH_TIMEOUT_MS }).pipe(
-          mapJjFailure(operation, input.cwd, "Could not import the pull request head."),
+          true,
         );
       }
 
