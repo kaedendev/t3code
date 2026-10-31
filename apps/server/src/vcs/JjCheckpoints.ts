@@ -82,7 +82,9 @@ export const makeJjCheckpointOps = (deps: JjCheckpointDeps): VcsDriver.VcsCheckp
         "self.id()",
       ])).stdout.trim();
       // Only revisions revived by this import belong to recovery, not the user's visible history.
-      const importedAncestors = `::present("${commitId}") ~ ::at_operation(${beforeImport}, visible_heads())`;
+      // The import also brings in refs the user moved meanwhile, so anything a name or a working
+      // copy reaches stays.
+      const importedAncestors = `::present("${commitId}") ~ ::at_operation(${beforeImport}, visible_heads()) ~ ::(bookmarks() | remote_bookmarks() | tags() | working_copies())`;
 
       yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {

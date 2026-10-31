@@ -48,7 +48,8 @@ Git but jj has forgotten it, so `jj restore --from <id>` fails with `Revision ..
 Restore recovers by writing a temporary `refs/heads/t3-restore-<uuid>`, running `jj git import`,
 and retrying. Cleanup forgets the temporary bookmark, deletes its Git ref, and abandons the
 recovery commit and any hidden ancestors revived by import, excluding history visible at the
-pre-import operation. Cleanup also runs if import completes just before interruption; a
+pre-import operation and anything a bookmark, tag or working copy reaches afterwards, since the
+import also brings in refs the user moved meanwhile. Cleanup also runs if import completes just before interruption; a
 `present()` revset makes an import that never completed safe to clean up. Every cleanup is
 attempted, and the primary failure plus all cleanup failures are retained in the returned cause.
 See [`JjCheckpoints.ts`](../../apps/server/src/vcs/JjCheckpoints.ts).
