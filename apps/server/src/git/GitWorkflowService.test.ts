@@ -1,6 +1,8 @@
 import * as DateTime from "effect/DateTime";
 import { assert, it, expect, vi } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
@@ -25,6 +27,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 import {
   describeJj,
@@ -1105,6 +1108,69 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
             Effect.succeed(handleFor(cwd === "/worktrees/pre-flip" ? "git" : "jj")),
           git: { removeWorktree: gitRemoveWorktree },
           jj: { removeWorktree: jjRemoveWorktree },
+        }),
+      ),
+    );
+  });
+
+  it.effect.each<{
+    readonly method: keyof JjWorkflow.JjWorkflow["Service"];
+    readonly run: (
+      workflow: GitWorkflowService.GitWorkflowService["Service"],
+    ) => Effect.Effect<unknown, Error>;
+  }>([
+    {
+      method: "runStackedAction",
+      run: (workflow) =>
+        workflow.runStackedAction({ actionId: "a", cwd: "/jj-lease/sub", action: "commit" }),
+    },
+    {
+      method: "pullCurrentBranch",
+      run: (workflow) => workflow.pullCurrentBranch("/jj-lease/sub"),
+    },
+    {
+      method: "switchRef",
+      run: (workflow) => workflow.switchRef({ cwd: "/jj-lease/sub", refName: "feature" }),
+    },
+    {
+      method: "createRef",
+      run: (workflow) =>
+        workflow.createRef({ cwd: "/jj-lease/sub", refName: "feature", switchRef: true }),
+    },
+    {
+      method: "preparePullRequestThread",
+      run: (workflow) =>
+        workflow.preparePullRequestThread({ cwd: "/jj-lease/sub", reference: "1", mode: "local" }),
+    },
+  ])("waits for the workspace lease before jj $method", ({ method, run }) => {
+    const ran = vi.fn();
+    const jjMethod = () => Effect.sync(() => ran() as never);
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const release = yield* Deferred.make<void>();
+      const holder = yield* withWorkspaceLease("/jj-lease", Deferred.await(release)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const mutation = yield* run(workflow).pipe(Effect.forkChild({ startImmediately: true }));
+      expect(ran).not.toHaveBeenCalled();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(mutation);
+      expect(ran).toHaveBeenCalledOnce();
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          detect: () => Effect.succeed(handleFor("jj")),
+          jj: { [method]: jjMethod },
+          jjDriver: {
+            repoPaths: () =>
+              Effect.succeed({
+                workspaceRoot: "/jj-lease",
+                mainWorkspaceRoot: "/jj-lease",
+                gitDir: "/jj-lease/.git",
+                isSecondaryWorkspace: false,
+              }),
+          },
         }),
       ),
     );

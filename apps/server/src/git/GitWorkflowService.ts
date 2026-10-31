@@ -261,6 +261,14 @@ export const make = Effect.gen(function* () {
   const jjWorkflow = yield* JjWorkflow.JjWorkflow;
   const jj = yield* JjVcsDriver.JjVcsDriver;
 
+  // A T3 snapshot landing between a jj command's snapshot and its checkout leaves `@` divergent.
+  const withJjCheckoutLease = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    jj.repoPaths(cwd).pipe(
+      Effect.map((paths) => paths.workspaceRoot),
+      Effect.orElseSucceed(() => cwd),
+      Effect.flatMap((workspaceRoot) => withCheckoutLease(workspaceRoot, effect)),
+    );
+
   /**
    * The driver kind that owns a project cwd. `null` means "not a repository", which is what the
    * `nonRepository*` shapes already express, and an unknown kind degrades to it too. A detection
@@ -627,7 +635,7 @@ export const make = Effect.gen(function* () {
     pullCurrentBranch: Effect.fn("GitWorkflowService.pullCurrentBranch")(function (cwd) {
       return route("GitWorkflowService.pullCurrentBranch", commandRouting, {
         git: () => git.pullCurrentBranch(cwd),
-        jj: () => jjWorkflow.pullCurrentBranch(cwd),
+        jj: () => withJjCheckoutLease(cwd, jjWorkflow.pullCurrentBranch(cwd)),
       })({ cwd });
     }),
     runStackedAction: Effect.fn("GitWorkflowService.runStackedAction")(function (input, options) {
@@ -642,7 +650,7 @@ export const make = Effect.gen(function* () {
             ),
           ),
         jj: (actionInput: GitRunStackedActionInput) =>
-          jjWorkflow.runStackedAction(actionInput, options),
+          withJjCheckoutLease(actionInput.cwd, jjWorkflow.runStackedAction(actionInput, options)),
       })(input);
     }),
     resolvePullRequest: route("GitWorkflowService.resolvePullRequest", workflowRouting, {
@@ -664,7 +672,10 @@ export const make = Effect.gen(function* () {
                 ),
               )
             : gitManager.preparePullRequestThread(input),
-        jj: jjWorkflow.preparePullRequestThread,
+        jj: (input) =>
+          input.mode === "local"
+            ? withJjCheckoutLease(input.cwd, jjWorkflow.preparePullRequestThread(input))
+            : jjWorkflow.preparePullRequestThread(input),
       },
     ),
     listRefs: routeOr(
@@ -756,7 +767,10 @@ export const make = Effect.gen(function* () {
               ),
             )
           : git.createRef(input),
-      jj: jjWorkflow.createRef,
+      jj: (input) =>
+        input.switchRef
+          ? withJjCheckoutLease(input.cwd, jjWorkflow.createRef(input))
+          : jjWorkflow.createRef(input),
     }),
     // The Git driver's `switchRef` needs a `Scope` the service closes locally; the declared type
     // carries none, and leaking it would reach every caller. The jj arm needs no scope.
@@ -767,7 +781,7 @@ export const make = Effect.gen(function* () {
             withCheckoutLease(handle.repository.rootPath, Effect.scoped(git.switchRef(input))),
           ),
         ),
-      jj: jjWorkflow.switchRef,
+      jj: (input) => withJjCheckoutLease(input.cwd, jjWorkflow.switchRef(input)),
     }),
     renameBranch: route("GitWorkflowService.renameBranch", workflowRouting, {
       git: git.renameBranch,
