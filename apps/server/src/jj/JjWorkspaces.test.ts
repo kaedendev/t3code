@@ -678,6 +678,60 @@ describeJj("JjWorkspaces.createWorktree", () => {
       }),
     ),
   );
+  it.effect("keeps a workspace the user created at the destination while T3 was adding", () =>
+    withJjRepo({ prefix: "t3-jj-add-race-", seed: true }, (repo) =>
+      Effect.gen(function* () {
+        const destination = repo.path.join(repo.base, "raced");
+        const unique = repo.path.join(destination, "unique.txt");
+        const process = {
+          ...repo.process,
+          run: (input: Parameters<typeof repo.process.run>[0]) =>
+            (input.command === "jj" &&
+            input.args.includes("add") &&
+            input.args.includes(workspaceNameForRef("feat/race"))
+              ? runJj(repo.root, [
+                  "workspace",
+                  "add",
+                  "--colocate",
+                  "--name",
+                  "personal",
+                  "-r",
+                  "main",
+                  destination,
+                ]).pipe(
+                  Effect.andThen(repo.fileSystem.writeFileString(unique, "personal work\n")),
+                  Effect.orDie,
+                )
+              : Effect.void
+            ).pipe(Effect.andThen(repo.process.run(input))),
+        };
+        const remotes = makeJjRemotes({ driver: repo.driver, process });
+        const ops = makeJjWorkspaces({
+          ...repo,
+          process,
+          worktreesDir: repo.base,
+          bookmarkTo: remotes.bookmarkTo,
+        });
+
+        yield* ops
+          .createWorktree({
+            cwd: repo.root,
+            refName: "main",
+            newRefName: "feat/race",
+            path: destination,
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(yield* repo.fileSystem.readFileString(unique), "personal work\n");
+        assert.isTrue(
+          (yield* repo.driver.listWorkspaces(repo.root)).some(
+            (workspace) => workspace.name === "personal",
+          ),
+        );
+      }),
+    ),
+  );
+
   it.effect("honors submodule settings and project policy in colocated workspaces", () =>
     withJjRepo({ prefix: "t3-jj-submodules-", seed: true }, (repo) =>
       Effect.gen(function* () {

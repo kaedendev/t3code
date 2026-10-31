@@ -356,16 +356,27 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
           ).pipe(
             mapJjFailure(operation, input.cwd, `Could not create a workspace at ${worktreePath}.`),
             // jj can register the workspace and then fail, and a retry on a registered name fails
-            // with "Workspace named '<name>' already exists".
+            // with "Workspace named '<name>' already exists". Someone else can also create the
+            // destination after the check above, so only T3's own registration proves ownership.
             Effect.onError(() =>
-              forgetWorkspace(operation, paths.mainWorkspaceRoot, workspaceName).pipe(
-                Effect.ignore,
-                Effect.andThen(
-                  destinationExisted
-                    ? Effect.void
-                    : fileSystem.remove(worktreePath, { recursive: true }).pipe(Effect.ignore),
-                ),
-              ),
+              Effect.gen(function* () {
+                const root = yield* canonicalize(worktreePath);
+                const registered = yield* driver
+                  .listWorkspaces(paths.mainWorkspaceRoot)
+                  .pipe(Effect.orElseSucceed(() => []));
+                const created = registered.some(
+                  (workspace) => workspace.name === workspaceName && workspace.root === root,
+                );
+                if (created) {
+                  yield* forgetWorkspace(operation, paths.mainWorkspaceRoot, workspaceName).pipe(
+                    Effect.ignore,
+                  );
+                }
+                if (destinationExisted) return;
+                yield* created
+                  ? fileSystem.remove(worktreePath, { recursive: true }).pipe(Effect.ignore)
+                  : removeIfOnlyJjMetadata(worktreePath);
+              }),
             ),
           );
         }),
