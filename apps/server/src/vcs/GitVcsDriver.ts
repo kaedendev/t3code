@@ -1314,6 +1314,30 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
+      // jj stores a conflicted change's sides as `.jjconflict-*` trees that Git would write out.
+      const jjConflict = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: [
+          "ls-tree",
+          "--name-only",
+          commitOid,
+          "--",
+          ":/JJ-CONFLICT-README",
+          ":/.jjconflict-side-0",
+        ],
+      });
+      if (jjConflict.stdout.trim().split("\n").length === 2) {
+        return yield* new VcsProcessExitError({
+          operation,
+          command: "git restore",
+          cwd: input.cwd,
+          exitCode: 0,
+          detail:
+            "This checkpoint holds a Jujutsu conflict, which Git cannot restore. Make Jujutsu available for this repository, then restore it again.",
+        });
+      }
+
       const tracked = yield* execute({
         operation,
         cwd: input.cwd,

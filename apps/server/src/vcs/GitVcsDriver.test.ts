@@ -1536,3 +1536,43 @@ it.effect("git metrics count fsync fallback and transient retry subprocesses sep
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
+
+it.effect("refuses to restore a Jujutsu conflict checkpoint without touching the workspace", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-jj-conflict-checkpoint-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "f"), "base\n");
+    yield* runGit(cwd, ["add", "."]);
+    yield* runGit(cwd, ["commit", "-m", "base"]);
+    // The tree jj 0.46 writes to Git for a conflicted change: one side at the path, plus scaffolding.
+    for (const [file, contents] of [
+      ["f", "left\n"],
+      [".jjconflict-base-0/f", "base\n"],
+      [".jjconflict-side-0/f", "left\n"],
+      [".jjconflict-side-1/f", "right\n"],
+      ["JJ-CONFLICT-README", "jj conflict\n"],
+    ] as const) {
+      yield* fileSystem.makeDirectory(path.dirname(path.join(cwd, file)), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(cwd, file), contents);
+    }
+    yield* runGit(cwd, ["add", "-A"]);
+    yield* runGit(cwd, ["commit", "-m", "conflict"]);
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/jj-conflict");
+    yield* runGit(cwd, ["update-ref", checkpointRef, "HEAD"]);
+    yield* runGit(cwd, ["reset", "--hard", "HEAD^"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "f"), "agent work\n");
+
+    const error = yield* driver.checkpoints
+      .restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false })
+      .pipe(Effect.flip);
+
+    assert.include(error.message, "Jujutsu conflict");
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "f")), "agent work\n");
+    assert.isFalse(yield* fileSystem.exists(path.join(cwd, "JJ-CONFLICT-README")));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
