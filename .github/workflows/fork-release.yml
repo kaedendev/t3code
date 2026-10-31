@@ -1,0 +1,363 @@
+name: Fork release
+
+# Releases the Jujutsu fork from the dispatched branch: CLI archives for linux-x64, linux-arm64,
+# and darwin-arm64, and the macOS arm64 desktop app with its update feed. Versions follow
+# scripts/fork-release-version.ts. T3 Connect stays unconfigured, so there is no relay state.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact fork version, such as 0.1.10602. Defaults to the next respin of the upstream stable the branch is built on."
+        required: false
+        type: string
+      publish:
+        description: "Publish the release and mark it latest. Off leaves a draft that no updater can see."
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+permissions:
+  # release-desktop.yml asks for actions: read (its Windows builds list artifacts).
+  actions: read
+  contents: read
+
+env:
+  UPSTREAM_REPOSITORY: https://github.com/pingdotgg/t3code.git
+
+jobs:
+  prepare:
+    name: Resolve version
+    if: github.repository == 'kaedendev/t3code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      base: ${{ steps.version.outputs.base }}
+      ref: ${{ steps.version.outputs.ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/scripts...
+
+      - id: version
+        name: Resolve fork version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # The newest upstream stable tag in this branch's history is its base. Peeled lines
+          # follow their tag in ls-remote output, so an annotated tag resolves to its commit.
+          base="$(
+            git ls-remote --tags "$UPSTREAM_REPOSITORY" 'v*' \
+              | sed -E 's#refs/tags/##; s#\^\{\}$##' \
+              | awk '{ commit[$2] = $1 } END { for (tag in commit) print commit[tag], tag }' \
+              | while read -r commit tag; do
+                  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+                  if git merge-base --is-ancestor "$commit" HEAD 2>/dev/null; then echo "$tag"; fi
+                done \
+              | sort -V | tail -n 1
+          )"
+          if [[ -z "$base" ]]; then
+            echo "No upstream stable tag is in this branch's history." >&2
+            exit 1
+          fi
+          released="$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' | tr '\n' ' ')"
+          args=(--base "$base" --released "$released")
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            args+=(--version "$REQUESTED_VERSION")
+          fi
+          version="$(node scripts/fork-release-version.ts "${args[@]}")"
+          if [[ " $released " == *" v$version "* ]]; then
+            echo "v$version is already released." >&2
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "base=$base"
+            echo "ref=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Fork release v$version on upstream $base." >> "$GITHUB_STEP_SUMMARY"
+
+  build_bundle:
+    name: Build JS bundle
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.prepare.outputs.version }}"
+
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Build JS bundle
+        env:
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: vp run build:desktop
+
+      # Same layout as release.yml's js-bundle, so release-desktop.yml packages it unchanged.
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop_mac_arm64:
+    name: Desktop macOS arm64
+    needs: [prepare, build_bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    secrets:
+      MACOS_SELF_SIGNED_CSC_LINK: ${{ secrets.CSC_LINK }}
+      MACOS_SELF_SIGNED_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ needs.prepare.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: macOS arm64
+      runner: macos-latest
+      platform: mac
+      target: dmg
+      arch: arm64
+      rust_target: aarch64-apple-darwin
+      resource_key: darwin-arm64
+      cli_archive: true
+      launch_check: true
+
+  # The Linux jobs also package a desktop app; the fork ships only their CLI archives.
+  desktop_linux_x64:
+    name: Desktop Linux x64
+    needs: [prepare, build_bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ needs.prepare.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: Linux x64
+      runner: ubuntu-latest
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+
+  desktop_linux_arm64:
+    name: Desktop Linux arm64
+    needs: [prepare, build_bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ needs.prepare.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: Linux arm64
+      runner: ubuntu-24.04-arm
+      platform: linux
+      target: AppImage
+      arch: arm64
+      rust_target: aarch64-unknown-linux-gnu
+      resource_key: linux-arm64
+      cli_archive: true
+
+  # Squirrel.Mac installs an update only if it satisfies the running app's designated requirement.
+  # This checks the new app against the published release's requirement, as installed apps will.
+  verify_mac_signature:
+    name: Verify macOS signature
+    needs: [prepare, desktop_mac_arm64]
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PUBLISH: ${{ inputs.publish }}
+    steps:
+      - name: Download macOS desktop artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: desktop-mac-arm64
+          path: desktop
+
+      # No `set -u`: macOS bash 3.2 treats an empty array as unbound.
+      - name: Check signature and update feed
+        shell: bash
+        run: |
+          set -eo pipefail
+          problems=()
+          app_of() {
+            mkdir -p "$2"
+            ditto -x -k "$1" "$2"
+            ls -d "$2"/*.app
+          }
+          app="$(app_of desktop/T3-Code-*-arm64.zip "$RUNNER_TEMP/new")"
+          details="$(codesign -dvv "$app" 2>&1 || true)"
+          echo "$details"
+          if grep -q '^Signature=adhoc' <<<"$details"; then
+            signature="ad-hoc"
+          elif grep -q '^Authority=' <<<"$details"; then
+            signature="certificate"
+          else
+            signature="unsigned"
+          fi
+          requirement="$(codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p' || true)"
+          echo "Designated requirement: ${requirement:-none}"
+          if [[ "$signature" == "certificate" ]]; then
+            codesign --verify --deep --strict --verbose=2 "$app"
+          else
+            problems+=("the app is $signature, so installed apps can never accept an update to it")
+          fi
+
+          feed="$app/Contents/Resources/app-update.yml"
+          cat "$feed"
+          grep -qx "owner: ${GH_REPO%%/*}" "$feed" && grep -qx "repo: ${GH_REPO#*/}" "$feed" \
+            || problems+=("app-update.yml does not point at $GH_REPO")
+          grep -qx "version: ${{ needs.prepare.outputs.version }}" desktop/latest-mac.yml \
+            || problems+=("latest-mac.yml is not for ${{ needs.prepare.outputs.version }}")
+
+          previous="none"
+          published="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          if [[ -n "$published" ]]; then
+            gh release download "$published" --pattern 'T3-Code-*-arm64.zip' --dir "$RUNNER_TEMP/previous-zip"
+            old_app="$(app_of "$RUNNER_TEMP"/previous-zip/*.zip "$RUNNER_TEMP/previous")"
+            old_requirement="$(codesign -d -r- "$old_app" 2>&1 | sed -n 's/^designated => //p')"
+            echo "$published requirement: $old_requirement"
+            if codesign --verify --deep --strict -R="$old_requirement" "$app"; then
+              previous="satisfied"
+            else
+              previous="violated"
+              problems+=("the app does not satisfy $published's designated requirement, so installed apps reject it")
+            fi
+          fi
+
+          {
+            echo "### macOS app"
+            echo "- Signature: $signature"
+            echo "- Designated requirement: \`${requirement:-none}\`"
+            echo "- Latest published release's requirement: ${previous} ${published:+($published)}"
+            for problem in "${problems[@]}"; do echo "- Problem: $problem"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+          for problem in "${problems[@]}"; do
+            if [[ "$PUBLISH" == "true" ]]; then echo "::error::$problem"; else echo "::warning::$problem"; fi
+          done
+          if [[ "$PUBLISH" == "true" && ${#problems[@]} -gt 0 ]]; then
+            exit 1
+          fi
+
+  release:
+    name: Create GitHub release
+    needs:
+      [prepare, desktop_mac_arm64, desktop_linux_x64, desktop_linux_arm64, verify_mac_signature]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE: ${{ needs.prepare.outputs.base }}
+      REF: ${{ needs.prepare.outputs.ref }}
+      PUBLISH: ${{ inputs.publish }}
+    steps:
+      - name: Download macOS desktop artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: desktop-mac-arm64
+          path: release-assets
+
+      - name: Download CLI archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+
+      # Installers verify archives against this file, so it is written from the uploaded bytes.
+      - name: Write CLI archive checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          archives=(t3-*.tar.gz)
+          [[ ${#archives[@]} -eq 3 ]] || { echo "Expected 3 CLI archives, found ${archives[*]}" >&2; exit 1; }
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create release
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(release-assets/*.dmg release-assets/*.zip release-assets/*.blockmap release-assets/latest-mac.yml release-assets/t3-*.tar.gz release-assets/SHA256SUMS)
+          [[ -f release-assets/latest-mac.yml ]] || { echo "latest-mac.yml is missing." >&2; exit 1; }
+          printf '%s\n' "${files[@]}"
+
+          existing="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "$existing" == "false" ]]; then
+            echo "$TAG is already published." >&2
+            exit 1
+          elif [[ "$existing" == "true" ]]; then
+            gh release delete "$TAG" --yes
+          fi
+
+          cat > notes.md <<EOF
+          T3 Code with Jujutsu support, built on upstream [$BASE](https://github.com/pingdotgg/t3code/releases/tag/$BASE) from \`$REF\`.
+          EOF
+          # Drafts are invisible to updaters, so assets upload before anything can be offered.
+          gh release create "$TAG" --draft --target "$REF" --title "T3 Code v$VERSION" --notes-file notes.md "${files[@]}"
+          if [[ "$PUBLISH" == "true" ]]; then
+            gh release edit "$TAG" --draft=false --latest
+            echo "Published $TAG as the latest release." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Left $TAG as a draft." >> "$GITHUB_STEP_SUMMARY"
+          fi
