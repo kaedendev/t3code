@@ -141,7 +141,6 @@ const inspect = Effect.fn("JjStorageCleanup.inspect")(function* (
     config: [["snapshot.auto-track", '"none()"']],
     maxOutputBytes: 64 * 1024,
     allowNonZeroExit: true,
-    retryStaleWorkspace: false,
   });
   if (snapshot.exitCode !== 0) {
     if (snapshot.stderr.toLowerCase().includes("working copy is stale")) {

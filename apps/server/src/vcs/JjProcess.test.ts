@@ -6,10 +6,13 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as JjProcess from "./JjProcess.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+
+const isJjProcessExitError = Schema.is(JjProcess.JjProcessExitError);
 
 const GLOBAL_ARGS = [
   "--no-pager",
@@ -72,7 +75,7 @@ describe("jjCommand", () => {
   });
 
   it.effect.each(["fetch", "push"])(
-    "preserves Git's authentication policy for git %s, including retries",
+    "preserves Git's authentication policy for git %s",
     (command) => {
       const calls: VcsProcess.VcsProcessInput[] = [];
 
@@ -83,7 +86,7 @@ describe("jjCommand", () => {
         });
 
         const remoteCalls = calls.filter((call) => call.args.includes(command));
-        assert.equal(remoteCalls.length, 2);
+        assert.equal(remoteCalls.length, 1);
         for (const call of remoteCalls) {
           assert.deepStrictEqual(
             call.env,
@@ -99,18 +102,7 @@ describe("jjCommand", () => {
               : { CUSTOM: "preserved", GIT_TERMINAL_PROMPT: "1" },
           );
         }
-      }).pipe(
-        Effect.provide(
-          recordingProcess(calls, (_input, callIndex) =>
-            callIndex === 0
-              ? output({
-                  exitCode: ChildProcessSpawner.ExitCode(1),
-                  stderr: "Error: The working copy is stale.",
-                })
-              : output(),
-          ),
-        ),
-      );
+      }).pipe(Effect.provide(recordingProcess(calls, () => output())));
     },
   );
 
@@ -181,33 +173,7 @@ describe("jjCommand", () => {
     }).pipe(Effect.provide(recordingProcess(calls, () => output())));
   });
 
-  it.effect("updates a stale workspace and retries the command exactly once", () => {
-    const calls: VcsProcess.VcsProcessInput[] = [];
-
-    return Effect.gen(function* () {
-      const process = yield* VcsProcess.VcsProcess;
-      const result = yield* JjProcess.jjCommand(process, "test.stale", "/repo", ["status"]);
-
-      assert.equal(result.stdout, "recovered");
-      assert.deepStrictEqual(
-        calls.map((call) => call.args.slice(GLOBAL_ARGS.length).join(" ")),
-        ["status", "workspace update-stale", "status"],
-      );
-    }).pipe(
-      Effect.provide(
-        recordingProcess(calls, (_input, callIndex) =>
-          callIndex === 0
-            ? output({
-                exitCode: ChildProcessSpawner.ExitCode(1),
-                stderr: "Error: The working copy is stale (not updated since operation abc).",
-              })
-            : output({ stdout: callIndex === 2 ? "recovered" : "" }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("propagates a second stale failure instead of retrying again", () => {
+  it.effect("reports a stale workspace instead of updating it behind the user", () => {
     const calls: VcsProcess.VcsProcessInput[] = [];
 
     return Effect.gen(function* () {
@@ -216,14 +182,19 @@ describe("jjCommand", () => {
         Effect.flip,
       );
 
-      assert.equal(error._tag, "VcsProcessExitError");
-      assert.equal(calls.length, 3);
+      const stale = isJjProcessExitError(error) ? error : null;
+      assert.equal(stale?.staleWorkspace, true);
+      assert.equal(stale?.detail, JjProcess.JJ_STALE_WORKSPACE_DETAIL);
+      assert.deepStrictEqual(
+        calls.map((call) => call.args.slice(GLOBAL_ARGS.length).join(" ")),
+        ["status"],
+      );
     }).pipe(
       Effect.provide(
         recordingProcess(calls, () =>
           output({
             exitCode: ChildProcessSpawner.ExitCode(1),
-            stderr: "Error: The working copy is stale.",
+            stderr: "Error: The working copy is stale (not updated since operation abc).",
           }),
         ),
       ),

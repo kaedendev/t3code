@@ -10,6 +10,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as JjProcess from "./JjProcess.ts";
 import * as JjVcsDriver from "./JjVcsDriver.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -521,6 +522,33 @@ describeJj("JjVcsDriver reads", () => {
         assert.equal(gone?.root, secondary);
         assert.isFalse(workspaces.some((workspace) => workspace.root === process.cwd()));
       }),
+    ),
+  );
+
+  it.effect("leaves unsnapshotted edits on disk when another workspace made this one stale", () =>
+    withJjRepo(
+      { prefix: "t3-jj-driver-", seed: true },
+      ({ driver, fileSystem, path, base, root }) =>
+        Effect.gen(function* () {
+          const secondary = path.join(base, "thread");
+          yield* runJj(root, ["workspace", "add", "--name", "t3-thread", "-r", "main", secondary]);
+          yield* fileSystem.writeFileString(path.join(secondary, "agent.txt"), "edit 1\n");
+          yield* driver.currentChange(secondary);
+          yield* fileSystem.writeFileString(path.join(secondary, "agent.txt"), "edit 2\n");
+          yield* fileSystem.writeFileString(path.join(secondary, "new.txt"), "new\n");
+          yield* fileSystem.writeFileString(path.join(root, "main.txt"), "main\n");
+          yield* runJj(root, ["commit", "-m", "main moves"]);
+          yield* runJj(root, ["rebase", "-s", "t3-thread@", "-d", "@-"]);
+
+          const error = yield* driver.currentChange(secondary).pipe(Effect.flip);
+
+          assert.deepInclude(error, { detail: JjProcess.JJ_STALE_WORKSPACE_DETAIL });
+          assert.equal(
+            yield* fileSystem.readFileString(path.join(secondary, "agent.txt")),
+            "edit 2\n",
+          );
+          assert.equal(yield* fileSystem.readFileString(path.join(secondary, "new.txt")), "new\n");
+        }),
     ),
   );
 });
