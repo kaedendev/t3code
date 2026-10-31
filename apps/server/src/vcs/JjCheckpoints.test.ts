@@ -79,6 +79,7 @@ describeJj("JjCheckpoints capture", () => {
             },
           },
           ensureGitDir: () => Effect.succeed(context.path.join(context.root, ".git")),
+          workspaceRoot: () => Effect.succeed(context.root),
           currentChange: () =>
             Effect.succeed({
               commitId: commit,
@@ -225,6 +226,7 @@ describeJj("JjCheckpoints restore", () => {
         const checkpoints = makeJjCheckpointOps({
           random: yield* SecureRandom.SecureRandom,
           ensureGitDir: () => Effect.succeed(repo.path.join(repo.root, ".git")),
+          workspaceRoot: () => Effect.succeed(repo.root),
           currentChange: repo.driver.currentChange,
           process: {
             run: (input) =>
@@ -331,6 +333,7 @@ describeJj("JjCheckpoints restore", () => {
         const checkpoints = makeJjCheckpointOps({
           random: yield* SecureRandom.SecureRandom,
           ensureGitDir: () => Effect.succeed(repo.path.join(repo.root, ".git")),
+          workspaceRoot: () => Effect.succeed(repo.root),
           currentChange: repo.driver.currentChange,
           process: {
             run: (input) =>
@@ -463,6 +466,43 @@ describeJj("JjCheckpoints restore", () => {
     ),
   );
 
+  it.effect("restores and diffs only the project directory, like Git", () =>
+    withRepo(
+      Effect.fnUntraced(function* (context) {
+        const project = context.path.join(context.root, "project");
+        yield* context.fileSystem.makeDirectory(project);
+        yield* write(context, "project/a.txt", "before\n");
+        yield* write(context, "outside.txt", "before\n");
+        yield* runJj(context.root, ["commit", "-m", "base"]);
+        yield* context.checkpoints.captureCheckpoint({ cwd: project, checkpointRef: baselineRef });
+        yield* write(context, "outside.txt", "unrelated user work\n");
+        yield* write(context, "project/a.txt", "agent work\n");
+        yield* context.checkpoints.captureCheckpoint({ cwd: project, checkpointRef: firstTurnRef });
+
+        const numstat = yield* context.checkpoints.diffCheckpoints({
+          cwd: project,
+          fromCheckpointRef: baselineRef,
+          toCheckpointRef: firstTurnRef,
+          ignoreWhitespace: false,
+          format: "numstat",
+        });
+        assert.deepStrictEqual(
+          parseTurnDiffFilesFromNumstat(numstat).map((file) => file.path),
+          ["project/a.txt"],
+        );
+        assert.isTrue(
+          yield* context.checkpoints.restoreCheckpoint({
+            cwd: project,
+            checkpointRef: baselineRef,
+          }),
+        );
+
+        assert.equal(yield* read(context, "project/a.txt"), "before\n");
+        assert.equal(yield* read(context, "outside.txt"), "unrelated user work\n");
+      }),
+    ),
+  );
+
   it.effect("does not substitute a committed parent for a missing checkpoint", () =>
     withRepo(
       Effect.fnUntraced(function* (context) {
@@ -535,6 +575,7 @@ describeJj("JjCheckpoints restore", () => {
         const checkpoints = makeJjCheckpointOps({
           random: yield* SecureRandom.SecureRandom,
           ensureGitDir: () => Effect.succeed(repo.path.join(repo.root, ".git")),
+          workspaceRoot: () => Effect.succeed(repo.root),
           currentChange: repo.driver.currentChange,
           process: {
             run: (input) =>
