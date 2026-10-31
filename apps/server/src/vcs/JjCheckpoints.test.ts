@@ -510,6 +510,59 @@ describeJj("JjCheckpoints restore", () => {
     ),
   );
 
+  it.effect("keeps a revived ancestor the user bookmarked while recovery ran", () =>
+    withJjRepo({ prefix: "t3-jj-recovery-bookmark-", seed: true }, (repo) =>
+      Effect.gen(function* () {
+        const gitCommit = (tree: string, parent: string, message: string) =>
+          runGit(repo.root, [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit-tree",
+            tree,
+            "-p",
+            parent,
+            "-m",
+            message,
+          ]).pipe(Effect.map((stdout) => stdout.trim()));
+        yield* write(repo, "saved.txt", "saved\n");
+        const captured = yield* commitId(repo.root, "@");
+        const userCommit = yield* gitCommit(`${captured}^^{tree}`, `${captured}^`, "user work");
+        const orphan = yield* gitCommit(`${captured}^{tree}`, userCommit, "t3 checkpoint");
+        yield* runGit(repo.root, ["update-ref", firstTurnRef, orphan]);
+        yield* write(repo, "saved.txt", "changed\n");
+        const checkpoints = makeJjCheckpointOps({
+          random: yield* SecureRandom.SecureRandom,
+          ensureGitDir: () => Effect.succeed(repo.path.join(repo.root, ".git")),
+          currentChange: repo.driver.currentChange,
+          process: {
+            run: (input) =>
+              Effect.gen(function* () {
+                if (input.command === "jj" && input.args.includes("import")) {
+                  yield* runGit(repo.root, ["update-ref", "refs/heads/user-work", userCommit]).pipe(
+                    Effect.orDie,
+                  );
+                }
+                return yield* repo.process.run(input);
+              }),
+          },
+        });
+
+        assert.isTrue(
+          yield* checkpoints.restoreCheckpoint({ cwd: repo.root, checkpointRef: firstTurnRef }),
+        );
+
+        assert.equal(yield* read(repo, "saved.txt"), "saved\n");
+        assert.equal(yield* commitId(repo.root, 'bookmarks(exact:"user-work")'), userCommit);
+        assert.notInclude(
+          yield* jjOut(repo.root, ["log", "-r", "all()", "--no-graph", "-T", "commit_id"]),
+          orphan,
+        );
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+    ),
+  );
+
   it.effect("recovers a checkpoint jj's own index has lost, leaving no bookmark behind", () =>
     withRepo(
       Effect.fnUntraced(function* (context) {
