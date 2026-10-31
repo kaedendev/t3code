@@ -136,6 +136,11 @@ so the next edit cannot rewrite published work. An intentionally edited earlier 
 place instead of rebasing onto its own descendant. When a local amend rewrites the remote bookmark's
 target, Pull refuses with push guidance rather than rebasing the change onto its own predecessor.
 
+jj's working-copy lock covers a command's snapshot and its checkout separately, so a snapshot that
+lands between them leaves `@` divergent. Stacked actions, Pull, switching and local PR checkout
+therefore take the same workspace lease as Git checkouts and turn start. Status reads still
+snapshot without it, as Git's do, and a user's own jj command in a terminal cannot take it.
+
 Publishing adds the remote before pushing. An actual first-push transport failure uses the same
 bounded hosting guidance as Git publishing, including the actual allocated remote name, and
 preserves that guidance through the public repository-service error. Local jj preflight refusals,
