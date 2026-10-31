@@ -3811,8 +3811,11 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  // A self-signed identity has no Apple team or provisioning profile to grant passkey entitlements.
+  const macSelfSigned =
+    (yield* Config.String("T3CODE_MACOS_SELF_SIGNED").pipe(Config.withDefault(""))) === "true";
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    options.platform === "mac" && options.signed && !macSelfSigned
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
