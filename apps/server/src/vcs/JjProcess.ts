@@ -9,7 +9,13 @@ export class JjProcessExitError extends VcsProcessExitError.extend<JjProcessExit
   "JjProcessExitError",
 )({
   reason: Schema.optional(GitCommandFailureReason),
+  staleWorkspace: Schema.optional(Schema.Literal(true)),
 }) {}
+
+// `update-stale` checks the new commit out over files edited since the last snapshot, so only the
+// user may run it.
+export const JJ_STALE_WORKSPACE_DETAIL =
+  "This Jujutsu workspace is stale because its change was rewritten from another workspace. T3 Code left the files as they are. Run `jj workspace update-stale` in this workspace, then retry. jj moves edits made since its last snapshot into a separate commit.";
 
 function processExitError(
   operation: string,
@@ -20,6 +26,7 @@ function processExitError(
   readingChange = false,
 ) {
   let failureKind = VcsProcess.classifyNonZeroExit(result.stderr, undefined);
+  const staleWorkspace = command === "jj" && isStaleWorkspace(result.stderr);
   if (command === "jj") {
     const missingRevision = /^Error: Revision `[^`]+` doesn't exist/m.test(result.stderr);
     if (missingRevision) {
@@ -38,6 +45,7 @@ function processExitError(
       result,
       failureKind,
     ),
+    ...(staleWorkspace ? { detail: JJ_STALE_WORKSPACE_DETAIL, staleWorkspace: true as const } : {}),
     // jj capitalizes its diagnostic prefix; leave hook and remote output untrusted.
     reason:
       classifyGitFailure(
@@ -60,15 +68,11 @@ export interface JjCommandOptions {
   readonly readingChange?: boolean;
   /** Let VcsProcess retry transient checkpoint failures before mapping their diagnostics. */
   readonly retryTransientFailures?: boolean;
-  /** Cleanup must preserve stale files rather than updating the workspace behind the user. */
-  readonly retryStaleWorkspace?: boolean;
   /** Extra `--config KEY=VALUE` pairs, applied to this invocation only. */
   readonly config?: ReadonlyArray<readonly [key: string, value: string]>;
 }
 
-const STALE_WORKSPACE_MARKERS = ["working copy is stale", "concurrent modification detected"];
 const LARGE_FILE_BANNER = "refused to snapshot some files";
-const UPDATE_STALE_TIMEOUT_MS = 30_000;
 const LOGGED_STDERR_MAX_CHARS = 2_000;
 
 /**
@@ -115,14 +119,13 @@ function jjArgs(args: ReadonlyArray<string>, options: JjCommandOptions | undefin
 }
 
 function isStaleWorkspace(stderr: string): boolean {
-  const normalized = stderr.toLowerCase();
-  return STALE_WORKSPACE_MARKERS.some((marker) => normalized.includes(marker));
+  return /^Error: The working copy is stale/m.test(stderr);
 }
 
 /**
  * Runs `jj` inside `cwd` (no `-R`: jj's `-R` demands an exact workspace root, and callers pass
- * project subdirectories). Retries once through `jj workspace update-stale` when the workspace is
- * stale. Warnings, hints and the large-file banner land on stderr, so only stdout may be parsed.
+ * project subdirectories). Warnings, hints and the large-file banner land on stderr, so only stdout
+ * may be parsed.
  */
 export const jjCommand = Effect.fn("JjProcess.jjCommand")(function* (
   process: VcsProcess.VcsProcess["Service"],
@@ -143,27 +146,7 @@ export const jjCommand = Effect.fn("JjProcess.jjCommand")(function* (
     allowNonZeroExit: true,
   } satisfies VcsProcess.VcsProcessInput;
 
-  let result = yield* process.run(input);
-
-  if (
-    options?.retryStaleWorkspace !== false &&
-    result.exitCode !== 0 &&
-    isStaleWorkspace(result.stderr)
-  ) {
-    yield* Effect.logWarning("jj workspace is stale, running `jj workspace update-stale`", {
-      cwd,
-      operation,
-    });
-    yield* process.run({
-      operation: `${operation}.updateStale`,
-      command: "jj",
-      args: jjArgs(["workspace", "update-stale"], undefined),
-      cwd,
-      allowNonZeroExit: true,
-      timeoutMs: UPDATE_STALE_TIMEOUT_MS,
-    });
-    result = yield* process.run(input);
-  }
+  const result = yield* process.run(input);
 
   if (result.stderr.toLowerCase().includes(LARGE_FILE_BANNER)) {
     yield* Effect.logWarning("jj refused to snapshot some files", {

@@ -197,8 +197,10 @@ An existing Git worktree (`.git` file, no `.jj`) keeps resolving as Git even whe
 
 Cleanup's holding interval and repo-wide jj pruning share a semaphore, so a normal resume cannot mistake a temporarily moved workspace for a missing one. Rename and rollback installation are interruption-masked. Ambiguous forget failures recheck registration before restoring; recovery failures are ordinary per-entry failures carrying the preserved directory, not sweep-killing defects.
 
-Cleanup never runs stale-workspace recovery: stale candidates are kept as `"workspace is stale"`
-without rewriting their files. The open-thread status poller's stale recovery is unchanged.
+T3 Code never runs `jj workspace update-stale`. It checks the rewritten commit out over files edited
+since the last snapshot, which can erase an agent's in-progress work. A stale workspace instead fails
+every jj command with a detail telling the user to run it, and cleanup keeps stale candidates as
+`"workspace is stale"`.
 With `keepWhen: "tracked-changes"`, ignored and untracked files are cleared in the holding directory
 only after final tracked-edit and description checks pass; refused removal preserves those files.
 `uncommitted-changes` keeps its existing file-preservation behavior.

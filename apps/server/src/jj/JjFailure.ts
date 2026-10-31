@@ -8,18 +8,30 @@ const isUnsupportedOperationError = Schema.is(VcsUnsupportedOperationError);
 const isGitCommandError = Schema.is(GitCommandError);
 const isJjProcessExitError = Schema.is(JjProcessExitError);
 
-/** Read the typed refusal before Schema.Defect flattens nested errors on the wire. */
-export const jjUnsupportedDetail = (cause: unknown): string | undefined => {
+const causeChainDetail = (
+  cause: unknown,
+  pick: (cause: object) => string | undefined,
+): string | undefined => {
   const seen = new Set<object>();
   while (typeof cause === "object" && cause !== null && !seen.has(cause)) {
-    if (isUnsupportedOperationError(cause)) {
-      return cause.detail;
-    }
+    const detail = pick(cause);
+    if (detail !== undefined) return detail;
     seen.add(cause);
     cause = "cause" in cause ? cause.cause : undefined;
   }
   return undefined;
 };
+
+/** Read the typed refusal before Schema.Defect flattens nested errors on the wire. */
+export const jjUnsupportedDetail = (cause: unknown): string | undefined =>
+  causeChainDetail(cause, (error) =>
+    isUnsupportedOperationError(error) ? error.detail : undefined,
+  );
+
+const jjStaleWorkspaceDetail = (cause: unknown): string | undefined =>
+  causeChainDetail(cause, (error) =>
+    isJjProcessExitError(error) && error.staleWorkspace === true ? error.detail : undefined,
+  );
 
 export const jjFailure = (operation: string, cwd: string, detail: string, cause?: unknown) => {
   const unsupportedDetail = jjUnsupportedDetail(cause);
@@ -32,7 +44,7 @@ export const jjFailure = (operation: string, cwd: string, detail: string, cause?
     operation,
     command: "jj",
     cwd,
-    detail: unsupportedDetail ?? detail,
+    detail: unsupportedDetail ?? jjStaleWorkspaceDetail(cause) ?? detail,
     ...(unsupportedDetail !== undefined
       ? { reason: "unsupported_repository" as const }
       : reason !== undefined
