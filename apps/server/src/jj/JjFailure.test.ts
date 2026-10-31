@@ -3,7 +3,7 @@ import { GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { JjProcessExitError } from "../vcs/JjProcess.ts";
+import { JJ_STALE_WORKSPACE_DETAIL, JjProcessExitError } from "../vcs/JjProcess.ts";
 import { jjFailure, mapJjFailure } from "./JjFailure.ts";
 
 const encodeError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
@@ -61,6 +61,21 @@ describe("jjFailure", () => {
       assert.notInclude(yield* encodeError(error), secret);
     }),
   );
+
+  it("surfaces a stale workspace in place of the caller's generic detail", () => {
+    const stale = new JjProcessExitError({
+      ...VcsProcessExitError.fromProcessExit(
+        { operation: "status", command: "jj", cwd: "/repo", argumentCount: 1 },
+        { exitCode: 1, stderr: "", stderrTruncated: false },
+        "command-failed",
+      ),
+      detail: JJ_STALE_WORKSPACE_DETAIL,
+      staleWorkspace: true,
+    });
+    const inner = jjFailure("inner", "/repo", "Could not read the working-copy snapshot.", stale);
+    const outer = jjFailure("outer", "/repo", "Could not commit this change.", inner);
+    assert.equal(outer.detail, JJ_STALE_WORKSPACE_DETAIL);
+  });
 
   it("does not infer a reason from arbitrary cause text", () => {
     const error = jjFailure(
