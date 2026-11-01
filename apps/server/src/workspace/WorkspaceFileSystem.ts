@@ -31,9 +31,10 @@ import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
 // NTFS reaches .git through trailing dots/spaces, stream suffixes and GIT~1; compare uppercased names.
+// jj's repo config can name programs to run, so `.jj` is refused like `.git`.
 const isGitMetadataName = (segment: string) => {
   const name = (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toUpperCase();
-  return name === ".GIT" || name === "GIT~1";
+  return name === ".GIT" || name === "GIT~1" || name === ".JJ";
 };
 
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
