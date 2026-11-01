@@ -732,6 +732,45 @@ describeJj("JjWorkspaces.createWorktree", () => {
     ),
   );
 
+  it.effect("keeps a file the user put at the destination while T3 was adding", () =>
+    withJjRepo({ prefix: "t3-jj-add-file-race-", seed: true }, (repo) =>
+      Effect.gen(function* () {
+        const destination = repo.path.join(repo.base, "raced");
+        const process = {
+          ...repo.process,
+          run: (input: Parameters<typeof repo.process.run>[0]) =>
+            (input.command === "jj" && input.args.includes("add")
+              ? repo.fileSystem.writeFileString(destination, "user file\n").pipe(Effect.orDie)
+              : Effect.void
+            ).pipe(Effect.andThen(repo.process.run(input))),
+        };
+        const remotes = makeJjRemotes({ driver: repo.driver, process });
+        const ops = makeJjWorkspaces({
+          ...repo,
+          process,
+          worktreesDir: repo.base,
+          bookmarkTo: remotes.bookmarkTo,
+        });
+
+        yield* ops
+          .createWorktree({
+            cwd: repo.root,
+            refName: "main",
+            newRefName: "feat/file-race",
+            path: destination,
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(yield* repo.fileSystem.readFileString(destination), "user file\n");
+        assert.isFalse(
+          (yield* repo.driver.listWorkspaces(repo.root)).some(
+            (workspace) => workspace.name === workspaceNameForRef("feat/file-race"),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.effect("honors submodule settings and project policy in colocated workspaces", () =>
     withJjRepo({ prefix: "t3-jj-submodules-", seed: true }, (repo) =>
       Effect.gen(function* () {
