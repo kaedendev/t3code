@@ -196,7 +196,11 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
         }
       }
     }
-    const remoteBase = splitRemoteRefName(input.refName, remoteNames);
+    // Missing-worktree recovery passes Git's full remote-tracking ref name.
+    const remoteBase = splitRemoteRefName(
+      input.refName.replace(/^refs\/remotes\//, ""),
+      remoteNames,
+    );
     if (remoteBase !== null) {
       // Tracked whenever a remote base is named, not only alongside `newRefName`: otherwise
       // `jj workspace add -r bookmarks(exact:"origin/featX")` registers a workspace and then
@@ -210,8 +214,10 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
         name: remoteBase.name,
       });
     }
+    // Tracking already created the same-named local bookmark, as Git's `-b <name> <remote>/<name>` does.
+    const newRefName = input.newRefName === remoteBase?.name ? undefined : input.newRefName;
     const baseRef = remoteBase?.name ?? input.refName;
-    const targetRef = input.newRefName ?? baseRef;
+    const targetRef = newRefName ?? baseRef;
     const workspaceName = workspaceNameForRef(targetRef);
 
     const workspaces = yield* driver
@@ -225,7 +231,7 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
         (yield* fileSystem.exists(existingRoot).pipe(Effect.orElseSucceed(() => false))) &&
         (yield* isJjWorkspaceDirectory(existingRoot));
       if (healthy) {
-        if (input.newRefName !== undefined) {
+        if (newRefName !== undefined) {
           return yield* jjFailure(
             operation,
             input.cwd,
@@ -304,27 +310,22 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
       }
     }
     const rollbackBookmark = () =>
-      input.newRefName === undefined
+      newRefName === undefined
         ? Effect.void
-        : run(
-            operation,
-            input.cwd,
-            ["bookmark", "delete", bookmarkNameArgument(input.newRefName)],
-            {
-              allowNonZeroExit: true,
-              timeoutMs: 20_000,
-            },
-          ).pipe(Effect.ignore);
+        : run(operation, input.cwd, ["bookmark", "delete", bookmarkNameArgument(newRefName)], {
+            allowNonZeroExit: true,
+            timeoutMs: 20_000,
+          }).pipe(Effect.ignore);
     yield* Effect.acquireUseRelease(
-      input.newRefName === undefined
+      newRefName === undefined
         ? Effect.succeed(false)
         : run(
             operation,
             input.cwd,
-            ["bookmark", "create", bookmarkNameArgument(input.newRefName), "-r", baseRevset],
+            ["bookmark", "create", bookmarkNameArgument(newRefName), "-r", baseRevset],
             { timeoutMs: 20_000 },
           ).pipe(
-            mapJjFailure(operation, input.cwd, `Could not create bookmark ${input.newRefName}.`),
+            mapJjFailure(operation, input.cwd, `Could not create bookmark ${newRefName}.`),
             Effect.as(true),
           ),
       () =>
@@ -349,7 +350,7 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
               "--name",
               workspaceName,
               "-r",
-              input.newRefName === undefined ? baseRevset : refNameToRevset(targetRef, remoteNames),
+              newRefName === undefined ? baseRevset : refNameToRevset(targetRef, remoteNames),
               worktreePath,
             ],
             { timeoutMs: WORKSPACE_ADD_TIMEOUT_MS },
@@ -394,7 +395,7 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
         cwd: input.cwd,
         targetRef,
         ...(remoteBase !== null ? { upstreamRemoteName: remoteBase.remote } : {}),
-        ...(input.newRefName !== undefined ? { newRefName: input.newRefName } : {}),
+        ...(newRefName !== undefined ? { newRefName: newRefName } : {}),
         ...(baseRefNameForConfig !== undefined ? { baseRefName: baseRefNameForConfig } : {}),
         ...(comparisonRef !== undefined ? { comparisonRef } : {}),
       },
