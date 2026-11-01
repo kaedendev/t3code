@@ -117,6 +117,9 @@ export class WorkspaceEntries extends Context.Service<
 
 /** Ignored files offered for copying; more than this is a build folder, not config. */
 const IGNORED_FILES_LIMIT = 200;
+const VCS_METADATA_DIRECTORIES: ReadonlySet<string> = new Set([".git", ".jj"]);
+const insideVcsMetadata = (segments: ReadonlyArray<string>) =>
+  segments.some((segment) => VCS_METADATA_DIRECTORIES.has(segment));
 
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
 const IGNORE_CHECK_CHUNK_SIZE = 1000;
@@ -319,10 +322,10 @@ export const make = Effect.gen(function* () {
               relative === ".." ||
               relative.startsWith(`..${path.sep}`) ||
               path.isAbsolute(relative) ||
-              relative.split(path.sep).includes(".git") ||
-              target.relativePath.split("/").includes(".git")
+              insideVcsMetadata(relative.split(path.sep)) ||
+              insideVcsMetadata(target.relativePath.split("/"))
             ) {
-              throw new Error("Directory must be inside the workspace and outside .git.");
+              throw new Error("Directory must be inside the workspace and outside .git and .jj.");
             }
             const children = await NodeFSP.readdir(directory, { withFileTypes: true });
             const isSameOrInside = (parent: string, child: string) => {
@@ -354,7 +357,7 @@ export const make = Effect.gen(function* () {
               if (
                 resolved === undefined ||
                 !isSameOrInside(root, resolved) ||
-                path.relative(root, resolved).split(path.sep).includes(".git")
+                insideVcsMetadata(path.relative(root, resolved).split(path.sep))
               ) {
                 return undefined;
               }
@@ -374,7 +377,7 @@ export const make = Effect.gen(function* () {
                   children
                     .slice(offset, offset + SYMLINK_RESOLVE_BATCH_SIZE)
                     .map(async (child): Promise<ProjectEntry["kind"] | undefined> => {
-                      if (child.name === ".git") return undefined;
+                      if (VCS_METADATA_DIRECTORIES.has(child.name)) return undefined;
                       if (child.isDirectory()) return "directory";
                       if (child.isFile()) return "file";
                       return child.isSymbolicLink() ? resolveSymlinkKind(child.name) : undefined;
