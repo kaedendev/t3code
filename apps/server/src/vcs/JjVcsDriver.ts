@@ -960,6 +960,7 @@ const makeVcsDriverShape = Effect.gen(function* () {
     initRepository,
     getDiffPreview: reviewDiff.getDiffPreview,
     getDiffFileContents: reviewDiff.getDiffFileContents,
+    getReviewBranchCommits: reviewDiff.getReviewBranchCommits,
     readBranchChangeTotals: reviewDiff.readBranchChangeTotals,
     repoPaths,
     availability,

@@ -101,6 +101,8 @@ export const make = Effect.gen(function* () {
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (!handle) return { commits: [], truncated: false };
+    const getDriverBranchCommits = handle.driver.getReviewBranchCommits;
+    if (getDriverBranchCommits) return yield* getDriverBranchCommits(input);
     if (handle.kind !== "git") {
       return yield* new VcsUnsupportedOperationError({
         operation: "ReviewService.getBranchCommits",
