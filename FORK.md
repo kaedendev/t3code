@@ -22,6 +22,12 @@ The stack has two parts:
 
 Mobile code is unchanged. The App Store app works against a fork server and shows Git wording for jj repos.
 
+## Known limits of jj support
+
+- A stale workspace is reported, not repaired. If you rewrite a thread's change from another workspace, T3 shows "workspace is stale". Run `jj workspace update-stale` in that workspace yourself.
+- Push refuses to rewrite a published bookmark, as git's push does. To overwrite on purpose, run `jj git push` from a terminal.
+- T3's status refresh snapshots the working copy. If a refresh lands while a `jj commit` or `jj describe` runs, that command can fail with "Concurrent checkout". The result is a divergent change; files on disk stay intact.
+
 ## Version numbers
 
 A fork build of upstream `X.Y.P`, respin `N`, is `X.Y.(10000 + 100·P + N)`. For example, upstream 0.1.6 respin 1 is `0.1.10601`.
