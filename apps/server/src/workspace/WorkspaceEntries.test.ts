@@ -106,6 +106,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, ".env", "secret=value");
         yield* writeTextFile(cwd, "node_modules/pkg/index.js");
         yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, ".jj/repo/store/type");
         yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -121,6 +122,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         );
         expect(root.entries.some((entry) => entry.path.includes("/"))).toBe(false);
         expect(root.entries.some((entry) => entry.path === ".git")).toBe(false);
+        expect(root.entries.some((entry) => entry.path === ".jj")).toBe(false);
         expect(root.truncated).toBe(false);
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "node_modules/pkg" })).toEqual({
           entries: [{ path: "node_modules/pkg/index.js", kind: "file", ignored: true }],
@@ -339,6 +341,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           yield* writeTextFile(cwd, ".git/HEAD");
+          yield* writeTextFile(cwd, ".jj/repo/store/type");
           const platform = yield* HostProcess.Platform;
           if (platform !== "win32") yield* fileSystem.symlink(outside, path.join(cwd, "external"));
           const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -346,6 +349,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             "../",
             outside,
             ".git",
+            ".jj/repo",
             "missing",
             ...(platform !== "win32" ? ["external"] : []),
           ]) {
