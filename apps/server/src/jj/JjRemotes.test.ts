@@ -391,6 +391,19 @@ describeJj("JjRemotes.resolveRemoteTrackingCommit", () => {
     ),
   );
 
+  it.effect("resolves Git's origin/HEAD to the remote's default bookmark", () =>
+    withJjRepo({ prefix: "t3-jj-tracking-head-", withRemote: true }, ({ driver, process, root }) =>
+      Effect.gen(function* () {
+        const resolved = yield* makeJjRemotes({ driver, process }).resolveRemoteTrackingCommit({
+          cwd: root,
+          refName: "HEAD",
+          fallbackRemoteName: "origin",
+        });
+        assert.equal(resolved.commitSha, (yield* driver.changeAt(root, "main@origin"))?.commitId);
+      }),
+    ),
+  );
+
   it.effect("resolves remote bookmark names containing revset punctuation literally", () =>
     withRemote(({ driver, remotes, root }) =>
       Effect.gen(function* () {
