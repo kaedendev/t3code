@@ -287,9 +287,7 @@ describeJj("JjStackedAction commit phase", () => {
         yield* runJj(root, ["describe", "-m", "x2"]);
         yield* runJj(root, ["bookmark", "create", "feat", "-r", "@"]);
         const descendant = yield* runJj(root, ["log", "--no-graph", "-r", "@", "-T", "change_id"]);
-        yield* runJj(root, ["git", "push", "--bookmark", "feat", "--remote", "origin"]);
         const remote = (yield* runGit(root, ["config", "--get", "remote.origin.url"])).trim();
-        assert.equal(yield* runGit(root, ["--git-dir", remote, "show", "feat:x2.txt"]), "x2\n");
         yield* runJj(root, ["edit", "@-"]);
         yield* fileSystem.writeFileString(path.join(root, "x1.txt"), "x1 edited\n");
         const result = yield* actions.runStackedAction(

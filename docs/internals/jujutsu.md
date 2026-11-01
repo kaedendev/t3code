@@ -126,7 +126,9 @@ branches or names on one change are refused as ambiguous, never silently selecte
 to `main`. Editing `main <- x1(@) <- x2[feat]` therefore commits and pushes `feat`, never `main`;
 bookmark movement retains the descendant tip instead of rewinding it to `@-`. Push-only and
 create-change-request actions refuse if the selected bookmark includes the current `@` anywhere
-in its ancestry: commit the change first. Commit-and-push remains supported mid-stack.
+in its ancestry: commit the change first. Commit-and-push remains supported mid-stack. A push
+whose local bookmark does not descend from its remote bookmark is refused, as Git refuses a
+non-fast-forward push, because `jj git push` would otherwise rewrite published history.
 
 Commit uses the typed message when nonblank, then the existing change description, then generated
 text. The selected text retains its exact trimmed formatting; a new bookmark derives its name from
