@@ -13,6 +13,7 @@ import type * as Path from "effect/Path";
 import { resolveWorkspaceRefName } from "../jj/JjStatus.ts";
 import { workspaceNameForRef } from "../jj/JjWorkspaces.ts";
 import { commitId, describeJj, runGit, runJj, withJjRepo, write } from "./testing/JjTestSupport.ts";
+import type * as VcsDriver from "./VcsDriver.ts";
 
 interface RepoContext {
   readonly getDiffPreview: (
@@ -21,6 +22,7 @@ interface RepoContext {
   readonly getDiffFileContents: (
     input: ReviewDiffFileContentsInput,
   ) => Effect.Effect<ReviewDiffFileContentsResult, VcsError>;
+  readonly getReviewBranchCommits: VcsDriver.VcsDriver["Service"]["getReviewBranchCommits"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly base: string;
@@ -36,7 +38,12 @@ const withRepo = <A, E>(
     if (!getDiffPreview || !getDiffFileContents) {
       assert.fail("The Jujutsu driver exposes no review diff operations.");
     }
-    return use({ ...repo, getDiffPreview, getDiffFileContents });
+    return use({
+      ...repo,
+      getDiffPreview,
+      getDiffFileContents,
+      getReviewBranchCommits: repo.driver.getReviewBranchCommits,
+    });
   });
 
 /** Publishes `main` through the colocated Git store, so `main@origin` and `trunk()` both resolve. */
@@ -340,6 +347,53 @@ describeJj("JjReviewDiff preview", () => {
         assert.equal(preview.sources[0]?.title, "Working copy (conflicted)");
         assert.notInclude(preview.sources[0]?.diff ?? "", ".jjconflict-");
         assert.notInclude(preview.sources[0]?.diff ?? "", "JJ-CONFLICT-README");
+      }),
+    ),
+  );
+
+  it.effect("lists the branch's commits and diffs a merge against its first parent", () =>
+    withRepo(
+      Effect.fnUntraced(function* (context) {
+        const getReviewBranchCommits = context.getReviewBranchCommits;
+        if (!getReviewBranchCommits) return assert.fail("The Jujutsu driver lists no commits.");
+        yield* write(context, "a.txt", "base\n");
+        yield* runJj(context.root, ["commit", "-m", "base"]);
+        yield* addOriginWithMain(context);
+        yield* write(context, "feature.txt", "feature\n");
+        yield* runJj(context.root, ["commit", "-m", "feature work"]);
+        const feature = yield* commitId(context.root, "@-");
+        yield* runJj(context.root, ["new", "main"]);
+        yield* write(context, "side.txt", "side\n");
+        yield* runJj(context.root, ["commit", "-m", "side work"]);
+        const side = yield* commitId(context.root, "@-");
+        yield* runJj(context.root, ["new", feature, side]);
+        yield* write(context, "merge.txt", "merge\n");
+        yield* runJj(context.root, ["commit", "-m", "merge them"]);
+        const merge = yield* commitId(context.root, "@-");
+
+        const listed = yield* getReviewBranchCommits({ cwd: context.root });
+
+        assert.isFalse(listed.truncated);
+        assert.deepInclude(listed.commits[0], { sha: merge, subject: "merge them" });
+        assert.sameMembers(
+          listed.commits.map((commit) => commit.sha),
+          [merge, feature, side],
+        );
+        assert.isTrue(
+          listed.commits.every((commit) => !Number.isNaN(Date.parse(commit.committedAt))),
+        );
+        const preview = yield* context.getDiffPreview({ cwd: context.root, commitSha: merge });
+        assert.deepInclude(preview.sources[0], {
+          id: merge,
+          kind: "commit",
+          commitSubject: "merge them",
+          baseRef: feature,
+          headRef: merge,
+        });
+        assert.equal(preview.sources.length, 1);
+        assert.include(preview.sources[0]?.diff ?? "", "merge.txt");
+        assert.include(preview.sources[0]?.diff ?? "", "side.txt");
+        assert.notInclude(preview.sources[0]?.diff ?? "", "feature.txt");
       }),
     ),
   );

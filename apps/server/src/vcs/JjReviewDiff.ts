@@ -2,6 +2,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import {
@@ -11,6 +12,7 @@ import {
   type VcsError,
   type VcsStatusLocalResult,
   VcsProcessExitError,
+  VcsProcessOutputReadError,
   VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import { resolveWorkspaceRefName } from "../jj/JjStatus.ts";
@@ -46,7 +48,7 @@ export interface JjReviewDiffDeps {
 
 export type JjReviewDiffOps = Pick<
   Required<VcsDriver.VcsDriver["Service"]>,
-  "getDiffPreview" | "getDiffFileContents"
+  "getDiffPreview" | "getDiffFileContents" | "getReviewBranchCommits"
 > & {
   readonly readBranchChangeTotals: (input: {
     readonly cwd: string;
@@ -59,6 +61,15 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const TRUNK_REVSET = "trunk()";
+const REVIEW_BRANCH_COMMIT_LIMIT = 100;
+const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
+const REVIEW_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+const BRANCH_COMMIT_TEMPLATE =
+  '"[" ++ json(self.commit_id()) ++ "," ++ json(self.description().first_line()) ++ "," ++' +
+  ' json(self.committer().timestamp().format("%Y-%m-%dT%H:%M:%S%:z")) ++ "]\\n"';
+const decodeBranchCommit = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String])),
+);
 
 function fullContextContents(patch: string): { oldContents: string; newContents: string } | null {
   let inHunk = false;
@@ -384,6 +395,54 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
       const operation = "JjVcsDriver.getDiffPreview";
       const gitDir = yield* deps.ensureGitDir(operation, input.cwd);
 
+      if (input.commitSha !== undefined || input.file?.sourceKind === "commit") {
+        const sha = input.commitSha?.toLowerCase();
+        const commit =
+          sha !== undefined &&
+          REVIEW_COMMIT_PATTERN.test(sha) &&
+          (input.file === undefined || input.file.sourceKind === "commit")
+            ? yield* deps.changeAt(input.cwd, sha)
+            : null;
+        if (sha === undefined || commit === null) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "jj log",
+            cwd: input.cwd,
+            exitCode: 1,
+            detail: "Selected commit is invalid or no longer available.",
+          });
+        }
+        // A merge shows what it brought onto its first parent, as Git's review does.
+        const parent = commit.parentCommitIds[0] ?? EMPTY_TREE_OID;
+        const result = yield* runDiff(
+          operation,
+          gitDir,
+          input.cwd,
+          [parent, sha],
+          input.ignoreWhitespace,
+          input.file,
+        );
+        const subject = commit.description.split("\n", 1)[0]?.trim() ?? "";
+        return {
+          cwd: input.cwd,
+          generatedAt: yield* DateTime.now,
+          sources: [
+            {
+              id: sha,
+              kind: "commit" as const,
+              title: `Commit ${sha.slice(0, 7)}`,
+              ...(subject ? { commitSubject: subject.slice(0, REVIEW_BRANCH_SUBJECT_LIMIT) } : {}),
+              baseRef: parent,
+              headRef: sha,
+              diff: result.stdout,
+              files: result.files,
+              diffHash: yield* hashDiff(result.stdout, result.files),
+              truncated: result.stdoutTruncated,
+            },
+          ],
+        };
+      }
+
       // jj auto-snapshots, so untracked non-ignored files are already inside `@`: no index dance.
       const change = yield* deps.currentChange(input.cwd);
       const workingTreeBase = change.parentCommitIds[0] ?? EMPTY_TREE_OID;
@@ -465,6 +524,7 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
       if (ref === "@-") {
         return (yield* workingCopy).parentCommitIds[0] ?? EMPTY_TREE_OID;
       }
+      if (ref === EMPTY_TREE_OID) return ref;
       const change = yield* deps.changeAt(
         cwd,
         refNameToRevset(ref, yield* deps.listRemoteNames(cwd)),
@@ -610,5 +670,58 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
     return { oldContents, newContents };
   });
 
-  return { getDiffPreview, getDiffFileContents, readBranchChangeTotals };
+  const getReviewBranchCommits: JjReviewDiffOps["getReviewBranchCommits"] = Effect.fn(
+    "JjVcsDriver.getReviewBranchCommits",
+  )(function* (input) {
+    const operation = "JjVcsDriver.getReviewBranchCommits";
+    const gitDir = yield* deps.ensureGitDir(operation, input.cwd);
+    const base = yield* resolveBaseChange(input.cwd, gitDir, input.baseRef);
+    // `@` is the working-tree source; the list holds what is committed below it.
+    const excluded =
+      base.change === null ? TRUNK_REVSET : `${base.change.commitId} | ${TRUNK_REVSET}`;
+    const result = yield* jjCommand(
+      deps.process,
+      operation,
+      input.cwd,
+      [
+        "log",
+        "-r",
+        `::@- ~ ::(${excluded})`,
+        "--no-graph",
+        "--limit",
+        String(REVIEW_BRANCH_COMMIT_LIMIT + 1),
+        "-T",
+        BRANCH_COMMIT_TEMPLATE,
+      ],
+      { ignoreWorkingCopy: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    );
+    const commits = yield* Effect.forEach(
+      result.stdout.split("\n").filter((line) => line.length > 0),
+      (line) =>
+        decodeBranchCommit(line).pipe(
+          Effect.map(([sha, subject, committedAt]) => ({
+            sha,
+            subject: subject.slice(0, REVIEW_BRANCH_SUBJECT_LIMIT),
+            committedAt,
+          })),
+        ),
+    ).pipe(
+      Effect.mapError(
+        () =>
+          new VcsProcessOutputReadError({
+            operation,
+            command: "jj log",
+            cwd: input.cwd,
+            stream: "stdout",
+            cause: new Error("Malformed jj output."),
+          }),
+      ),
+    );
+    return {
+      commits: commits.slice(0, REVIEW_BRANCH_COMMIT_LIMIT),
+      truncated: commits.length > REVIEW_BRANCH_COMMIT_LIMIT,
+    };
+  });
+
+  return { getDiffPreview, getDiffFileContents, getReviewBranchCommits, readBranchChangeTotals };
 };

@@ -6,6 +6,8 @@ import type {
   VcsInitInput,
   VcsListRemotesResult,
   VcsListWorkspaceFilesResult,
+  ReviewBranchCommitsInput,
+  ReviewBranchCommitsResult,
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
   ReviewDiffPreviewInput,
@@ -103,6 +105,10 @@ export class VcsDriver extends Context.Service<
     readonly getDiffFileContents?: (
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, VcsError>;
+    /** The review commit list. Optional for the same reason as `getDiffPreview`. */
+    readonly getReviewBranchCommits?: (
+      input: ReviewBranchCommitsInput,
+    ) => Effect.Effect<ReviewBranchCommitsResult, VcsError>;
     /**
      * Whether `checkpoints` can actually run against THIS repository, as opposed to whether this
      * driver implements checkpointing at all. A driver that is always usable once detected omits
