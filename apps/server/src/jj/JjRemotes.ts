@@ -611,6 +611,24 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
       if (localTarget !== undefined && localTarget !== null && localTarget === remoteTarget) {
         return { status: "skipped_up_to_date" as const, refName: input.name };
       }
+      // `jj git push` moves the remote anywhere, while Git rejects a non-fast-forward push.
+      if (
+        typeof remoteTarget === "string" &&
+        typeof localTarget === "string" &&
+        (yield* driver
+          .countRevset(input.cwd, `${remoteTarget} & ::${localTarget}`)
+          .pipe(
+            mapJjFailure(input.operation, input.cwd, "Could not check the remote bookmark."),
+          )) === 0
+      ) {
+        return yield* new GitCommandError({
+          operation: input.operation,
+          command: "jj",
+          cwd: input.cwd,
+          detail: `${input.name} on ${input.remoteName} has commits your local bookmark doesn't, so pushing would rewrite published history. Pull if they are someone else's work. To replace them, push from a terminal with \`jj git push\`.`,
+          reason: "push_rejected_non_fast_forward",
+        });
+      }
 
       const gitPaths = { gitDir: paths.gitDir, cwd: paths.mainWorkspaceRoot };
       const captured = yield* capturePrivateRemoteRefs(
