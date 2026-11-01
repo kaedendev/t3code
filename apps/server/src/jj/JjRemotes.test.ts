@@ -627,6 +627,36 @@ describeJj("JjRemotes.pushBookmark", () => {
     ),
   );
 
+  it.effect("refuses a push that would rewrite the published bookmark", () =>
+    withJjRepo({ prefix: "t3-jj-push-rewrite-", withRemote: true }, (repo) =>
+      Effect.gen(function* () {
+        const { driver, fileSystem, path, process, remotePath, root } = repo;
+        yield* runJj(root, ["bookmark", "create", "feat", "-r", "main"]);
+        yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "published\n");
+        yield* runJj(root, ["commit", "-m", "published"]);
+        yield* runJj(root, ["bookmark", "set", "feat", "-r", "@-"]);
+        yield* runJj(root, ["git", "push", "--bookmark", "feat", "--remote", "origin"]);
+        const published = (yield* runGit(remotePath, ["rev-parse", "refs/heads/feat"])).trim();
+        yield* runJj(root, ["edit", "feat"]);
+        yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "rewritten\n");
+        yield* runJj(root, ["commit", "-m", "rewritten"]);
+
+        const failure = yield* makeJjRemotes({ driver, process })
+          .pushBookmark({ cwd: root, name: "feat", remoteName: "origin", operation: "test" })
+          .pipe(Effect.flip);
+
+        assert.equal(
+          failure._tag === "GitCommandError" ? failure.reason : null,
+          "push_rejected_non_fast_forward",
+        );
+        assert.equal(
+          (yield* runGit(remotePath, ["rev-parse", "refs/heads/feat"])).trim(),
+          published,
+        );
+      }),
+    ),
+  );
+
   it.effect("pushes to a remote whose name contains glob punctuation literally", () =>
     withJjRepo({ prefix: "t3-jj-push-pattern-", withRemote: true }, (repo) =>
       Effect.gen(function* () {
