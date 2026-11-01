@@ -678,6 +678,43 @@ describeJj("JjWorkspaces.createWorktree", () => {
       }),
     ),
   );
+  it.effect("recreates a pushed thread bookmark from its Git remote-tracking ref", () =>
+    withRepo(
+      ({ driver, fileSystem, ops, path, root, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* fileSystem.writeFileString(path.join(root, "thread.txt"), "thread\n");
+          yield* runJj(root, ["commit", "-m", "thread work"]);
+          yield* runJj(root, ["bookmark", "create", "feat/pushed", "-r", "@-"]);
+          yield* runJj(root, ["git", "push", "--bookmark", "feat/pushed", "--remote", "origin"]);
+          const pushed = yield* commitId(root, "@-");
+          yield* runJj(root, ["bookmark", "forget", "feat/pushed"]);
+          yield* runJj(root, ["git", "fetch"]);
+          yield* runJj(root, ["bookmark", "untrack", "feat/pushed", "--remote", "origin"]);
+
+          yield* ops.createWorktree({
+            cwd: root,
+            refName: "refs/remotes/origin/feat/pushed",
+            newRefName: "feat/pushed",
+            path: path.join(worktreesDir, "recreated"),
+          });
+
+          const bookmarks = yield* driver.listBookmarks(root);
+          assert.equal(
+            bookmarks.find(
+              (bookmark) => bookmark.name === "feat/pushed" && bookmark.remote === null,
+            )?.target,
+            pushed,
+          );
+          assert.isTrue(
+            bookmarks.find(
+              (bookmark) => bookmark.name === "feat/pushed" && bookmark.remote === "origin",
+            )?.tracked,
+          );
+        }),
+      { withRemote: true },
+    ),
+  );
+
   it.effect("keeps a workspace the user created at the destination while T3 was adding", () =>
     withJjRepo({ prefix: "t3-jj-add-race-", seed: true }, (repo) =>
       Effect.gen(function* () {
