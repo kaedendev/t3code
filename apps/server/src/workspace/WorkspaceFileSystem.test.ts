@@ -732,6 +732,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           [cwd, ".git. /config"],
           [cwd, ".git::$INDEX_ALLOCATION/config"],
           [cwd, "GIT~1/config"],
+          [cwd, ".jj/repo/config.toml"],
+          [cwd, ".JJ. /repo/config.toml"],
           [path.join(cwd, ".git"), "config"],
           [cwd, ".bare/config"],
           [path.join(cwd, ".bare"), "hooks/post-checkout"],
