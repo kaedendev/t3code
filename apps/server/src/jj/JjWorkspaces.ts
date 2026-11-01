@@ -132,10 +132,10 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
   const removeIfOnlyJjMetadata = Effect.fn("JjWorkspaces.removeIfOnlyJjMetadata")(function* (
     directory: string,
   ) {
-    const entries = yield* fileSystem
-      .readDirectory(directory)
-      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
-    if (entries.length === 0 || (entries.length === 1 && entries[0] === ".jj")) {
+    // An unreadable path, a file included, is not known to be empty.
+    const entries = yield* fileSystem.readDirectory(directory).pipe(Effect.option);
+    if (Option.isNone(entries)) return;
+    if (entries.value.length === 0 || (entries.value.length === 1 && entries.value[0] === ".jj")) {
       yield* fileSystem.remove(directory, { recursive: true }).pipe(Effect.ignore);
     }
   });
