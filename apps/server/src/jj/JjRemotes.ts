@@ -377,7 +377,15 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
       .pipe(mapJjFailure(operation, input.cwd, "Could not read this repository's remotes."));
     const split = splitRemoteRefName(input.refName, remoteNames);
     const remoteName = split?.remote ?? input.fallbackRemoteName;
-    const name = split?.name ?? input.refName;
+    const requested = split?.name ?? input.refName;
+    // Git's `<remote>/HEAD` names the remote's default branch; jj has no HEAD bookmark.
+    const name =
+      requested === "HEAD"
+        ? ((yield* driver
+            .resolveDefaultBookmark(input.cwd)
+            .pipe(mapJjFailure(operation, input.cwd, "Could not resolve the default bookmark."))) ??
+          requested)
+        : requested;
 
     const change = yield* driver
       .changeAt(input.cwd, remoteBookmarkRevset(remoteName, name))
