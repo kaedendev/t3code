@@ -40,7 +40,7 @@ Fork versions sort above every upstream release on the same minor version. Clien
    ```sh
    gh workflow run fork-release.yml --repo kaedendev/t3code --ref jj/stable
    ```
-2. Check the draft on the Releases page. The macOS job summary must show a `certificate leaf` designated requirement, not `adhoc`.
+2. Check the run's **Verify macOS signature** summary. It must show `Gatekeeper: Notarized Developer ID` and no problems. A publish run fails on any problem.
 3. Publish it:
    ```sh
    gh workflow run fork-release.yml --repo kaedendev/t3code --ref jj/stable -f publish=true
@@ -50,12 +50,11 @@ After a release is published, **Update everything** in a fork client moves the f
 
 ## macOS signing
 
-The workflow signs the Mac app with the identity stored in the `CSC_LINK` and `CSC_KEY_PASSWORD` repository secrets. The app is not notarized.
+The workflow signs the Mac app and the macOS CLI with the Developer ID Application identity in the `CSC_LINK` and `CSC_KEY_PASSWORD` repository secrets. It notarizes both with the App Store Connect API key in `APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
 
-- **Today:** the owner's "Apple Development" certificate.
-- **Later:** a Developer ID certificate, once the paid account is approved.
+The app carries no passkey entitlements, because Apple grants those only to T3's own team. Passkeys in the in-app browser therefore don't work in the fork.
 
-macOS installs an update only when it is signed by the same identity as the running app. Changing the identity means one manual reinstall on every Mac.
+macOS installs an update only when it satisfies the running app's designated requirement. For Developer ID that requirement is the team, so a renewed certificate from the same team is fine. Moving to another team means one manual reinstall on every Mac.
 
 ## Move a machine onto the fork
 
@@ -66,9 +65,9 @@ Do this once per machine. After that, updates come from the fork.
   T3CODE_RELEASE_BASE_URL=https://github.com/kaedendev/t3code/releases/download t3 update <fork-version>
   ```
 - **Mac desktop app:**
-  1. Download the `.dmg` from the release.
-  2. Drag the app over `T3 Code (Beta).app`.
-  3. The first launch is blocked. Allow it in **System Settings > Privacy & Security > Open Anyway**.
+  1. Quit T3 Code.
+  2. Download the `.dmg` from the release and drag the app into **Applications**, replacing `T3 Code (Beta).app`.
+  3. On first launch, macOS may ask to let T3 Code use its "Safe Storage" keychain item, because the app's signer changed. Enter your password and choose **Always Allow**.
 
   Threads and settings in `~/.t3` carry over.
 
