@@ -143,8 +143,11 @@ jobs:
     needs: [prepare, build_bundle]
     uses: ./.github/workflows/release-desktop.yml
     secrets:
-      MACOS_SELF_SIGNED_CSC_LINK: ${{ secrets.CSC_LINK }}
-      MACOS_SELF_SIGNED_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      MACOS_FORK_CSC_LINK: ${{ secrets.CSC_LINK }}
+      MACOS_FORK_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     with:
       version: ${{ needs.prepare.outputs.version }}
       ref: ${{ needs.prepare.outputs.ref }}
@@ -255,6 +258,15 @@ jobs:
           else
             problems+=("the app is $signature, so installed apps can never accept an update to it")
           fi
+          # A Mac opens a downloaded app without "Open Anyway" only if it is notarized Developer ID.
+          gatekeeper="$(spctl --assess --type execute -vv "$app" 2>&1 || true)"
+          echo "$gatekeeper"
+          gatekeeper_source="$(sed -n 's/^source=//p' <<<"$gatekeeper")"
+          grep -q ': accepted$' <<<"$gatekeeper" \
+            || problems+=("Gatekeeper rejects the app (${gatekeeper_source:-no source}), so a fresh install needs Open Anyway")
+          entitlements="$(codesign -d --entitlements - --xml "$app" 2>/dev/null || true)"
+          grep -q 'com.apple.security.device.audio-input' <<<"$entitlements" \
+            || problems+=("the app lacks the camera and microphone entitlements, so agents get silent access-denied")
 
           feed="$app/Contents/Resources/app-update.yml"
           cat "$feed"
@@ -281,6 +293,7 @@ jobs:
           {
             echo "### macOS app"
             echo "- Signature: $signature"
+            echo "- Gatekeeper: ${gatekeeper_source:-rejected}"
             echo "- Designated requirement: \`${requirement:-none}\`"
             echo "- Latest published release's requirement: ${previous} ${published:+($published)}"
             for problem in "${problems[@]}"; do echo "- Problem: $problem"; done
