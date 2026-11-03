@@ -66,7 +66,7 @@ function parseTangledRepositoryPath(path: string): TangledRepositoryRef | null {
 
 const SCP_REMOTE = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/\/)(.+)$/u;
 
-/** Hosted (`tangled.org`, `tangled.sh`) and Tangled-run knot remotes, over SSH or HTTP. */
+/** Hosted (`tangled.org`, `tangled.sh`) and knot remotes, over SSH or HTTP. */
 export function parseTangledRemote(remoteUrl: string): TangledRemote | null {
   const trimmed = remoteUrl.trim();
   let host: string;
@@ -82,9 +82,11 @@ export function parseTangledRemote(remoteUrl: string): TangledRemote | null {
     host = scp[1] ?? "";
     path = scp[2] ?? "";
   }
-  if (!isTangledHost(host)) return null;
   const repository = parseTangledRepositoryPath(path);
   if (repository === null) return null;
+  // Only a knot names a repository by its DID, so that path claims any host, as a self-hosted
+  // knot's; `owner/name` on an unknown host could be any forge's.
+  if (!isTangledHost(host) && repository.kind !== "repo-did") return null;
   return { repository, knot: isWebHost(host) ? null : host.toLowerCase() };
 }
 
@@ -117,9 +119,9 @@ function repositoryKeyFromRemote(key: string): string | null {
     parseTangledRemote(key) ??
     (() => {
       const [host = "", ...path] = key.split("/");
-      if (!isTangledHost(host)) return null;
       const repository = parseTangledRepositoryPath(path.join("/"));
-      return repository === null ? null : { repository };
+      if (repository === null) return null;
+      return isTangledHost(host) || repository.kind === "repo-did" ? { repository } : null;
     })();
   return remote === null ? null : tangledRepositoryKey(remote.repository);
 }
@@ -214,8 +216,8 @@ export const definition = defineSourceControl({
     return parsed !== null && parseChangeRequestUrl(parsed) !== null;
   },
   checkoutChangeRequestHost: () => null,
-  recognizeRemote: ({ hostname }) =>
-    isTangledHost(hostname)
+  recognizeRemote: ({ hostname, remoteUrl }) =>
+    isTangledHost(hostname) || parseTangledRemote(remoteUrl) !== null
       ? { kind: KIND, name: "Tangled", baseUrl: `https://${TANGLED_WEB_HOST}` }
       : null,
   changeRequestHost: () => TANGLED_WEB_HOST,

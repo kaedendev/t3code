@@ -19,6 +19,8 @@ describe("Tangled remotes", () => {
     [`https://tangled.org/${REPO_DID}`, { repoDid: REPO_DID }, null],
     [`https://knot1.tangled.sh/${REPO_DID}`, { repoDid: REPO_DID }, "knot1.tangled.sh"],
     [`ssh://git@knot1.tangled.sh:2222/${REPO_DID}`, { repoDid: REPO_DID }, "knot1.tangled.sh"],
+    [`git@knot.kaeden.codes:${REPO_DID}`, { repoDid: REPO_DID }, "knot.kaeden.codes"],
+    [`https://knot.kaeden.codes/${REPO_DID}`, { repoDid: REPO_DID }, "knot.kaeden.codes"],
     [
       "git@knot1.tangled.sh:kaeden.codes/repo",
       { owner: "kaeden.codes", name: "repo" },
@@ -41,6 +43,7 @@ describe("Tangled remotes", () => {
 
   it.each([
     "git@github.com:tangled.org/core",
+    "git@knot.kaeden.codes:kaeden.codes/repo",
     "https://tangled.org.evil.test/a/b",
     "https://nottangled.sh/a/b",
     "git@tangled.org:core",
@@ -58,7 +61,10 @@ describe("Tangled remotes", () => {
     expect(key?.("knot1.tangled.sh/kaeden.codes/repo")).toBe("tangled.org/kaeden.codes/repo");
     expect(key?.(`git@tangled.org:${REPO_DID}`)).toBe(`tangled.org/${REPO_DID}`);
     expect(key?.(`https://knot1.tangled.sh/${REPO_DID}`)).toBe(`tangled.org/${REPO_DID}`);
+    expect(key?.(`git@knot.kaeden.codes:${REPO_DID}`)).toBe(`tangled.org/${REPO_DID}`);
+    expect(key?.(`knot.kaeden.codes/${REPO_DID}`)).toBe(`tangled.org/${REPO_DID}`);
     expect(key?.("github.com/tangled.org/core")).toBeNull();
+    expect(key?.("knot.kaeden.codes/kaeden.codes/repo")).toBeNull();
     expect(repoDidFromKey(`tangled.org/${REPO_DID}`)).toBe(REPO_DID);
     expect(repoDidFromKey("tangled.org/tangled.org/core")).toBeNull();
   });
