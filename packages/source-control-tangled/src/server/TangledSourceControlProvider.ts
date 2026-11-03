@@ -24,6 +24,7 @@ import {
 } from "../shared/definition.ts";
 import * as TangledApi from "./TangledApi.ts";
 import { TangledAuth, type TangledAuthError } from "./TangledAuth.ts";
+import * as TangledRound from "./tangledRound.ts";
 
 const KIND = SourceControlProviderKind.make("tangled");
 const SIGN_IN_HINT = "Sign in to Tangled in Settings → Source control → Tangled.";
@@ -233,64 +234,121 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
+    Effect.fn("TangledSourceControlProvider.listChangeRequests")(function* (input) {
+      const operation = "listChangeRequests";
+      const target = yield* resolveTarget(operation, input);
+      const branch = SourceControlProvider.sourceBranch(input);
+      const owner = SourceControlProvider.sourceControlRefFromInput(input)?.owner?.toLowerCase();
+      const limit = input.limit ?? 20;
+      const viewer = Option.getOrNull(yield* auth.viewer);
+      const states: ReadonlyArray<TangledApi.TicketState> =
+        input.state === "all" ? ["open", "completed", "closed"] : [ticketState(input.state)];
+      const found: Array<ChangeRequest> = [];
+      for (const state of states) {
+        let cursor: string | null = null;
+        let scanned = 0;
+        do {
+          const page: TangledApi.TangledPage<TangledApi.TangledTicket> = yield* api
+            .listPulls({ repoDid: target.repoDid, state, limit: PAGE_SIZE, cursor })
+            .pipe(Effect.mapError(fromApi(operation, input.cwd)));
+          scanned += page.items.length;
+          // Bobbin ignores its author filter, so narrowing to the viewer's own happens here.
+          const candidates = page.items.filter(
+            (ticket) =>
+              ticketNumber(ticket.rkey) !== null &&
+              ticket.targetBranch.length > 0 &&
+              (viewer === null || ticket.authorDid === viewer.did),
+          );
+          const matches = yield* Effect.forEach(
+            candidates,
+            (ticket) =>
+              api
+                .listRounds(ticket.uri)
+                .pipe(
+                  Effect.map((rounds) =>
+                    latest(rounds)?.sourceBranch === branch ? { ticket, rounds } : null,
+                  ),
+                ),
+            { concurrency: 8 },
+          ).pipe(Effect.mapError(fromApi(operation, input.cwd)));
+          for (const match of matches) {
+            if (match === null || found.length >= limit) continue;
+            const pull = yield* toChangeRequest(target, match.ticket, match.rounds);
+            if (pull === null) continue;
+            if (owner !== undefined && pull.headRepositoryOwnerLogin?.toLowerCase() !== owner)
+              continue;
+            found.push(pull);
+          }
+          cursor = page.cursor;
+        } while (cursor !== null && scanned < BRANCH_SCAN_LIMIT && found.length < limit);
+      }
+      return found;
+    });
+
+  /**
+   * Tangled never makes a round from a push, so a push T3 makes to the branch of the viewer's open
+   * pull request submits the new head as its next round, as the web's Resubmit would.
+   */
+  const branchPushed: NonNullable<
+    SourceControlProvider.SourceControlProvider["Service"]["branchPushed"]
+  > = Effect.fn("TangledSourceControlProvider.branchPushed")(function* (input) {
+    const operation = "branchPushed";
+    // The push already stands, so the note says what was not done before why.
+    const notResubmitted = (number: number | null) => (cause: SourceControlProviderError) =>
+      error(
+        operation,
+        input.cwd,
+        `${number === null ? "The pull request" : `Pull request #${number}`} was not resubmitted. ${cause.detail}`,
+        cause,
+      );
+    if (Option.isNone(yield* auth.viewer)) return;
+    const stale = (yield* listChangeRequests({
+      cwd: input.cwd,
+      headSelector: input.branch,
+      state: "open",
+    }).pipe(Effect.mapError(notResubmitted(null)))).filter(
+      (pull) => !pull.isCrossRepository && pull.headSha !== input.headSha,
+    );
+    if (stale.length === 0) return;
+    const target = yield* resolveTarget(operation, input).pipe(
+      Effect.mapError(notResubmitted(null)),
+    );
+    for (const pull of stale) {
+      const source = {
+        target,
+        targetBranch: pull.baseRefName,
+        sourceRepoDid: target.repoDid,
+        sourceBranch: input.branch,
+      };
+      yield* TangledRound.awaitMirroredHead(api, {
+        repoDid: target.repoDid,
+        branch: input.branch,
+        head: input.headSha,
+      }).pipe(
+        Effect.andThen(TangledRound.proposeRound(api, source)),
+        Effect.flatMap((round) =>
+          TangledRound.submitRound(api, {
+            ...source,
+            ...round,
+            ticketUri: TangledApi.ticketUri(target.repoDid, String(pull.number)),
+          }),
+        ),
+        Effect.mapError((cause) =>
+          notResubmitted(pull.number)(fromApi(operation, input.cwd)(cause)),
+        ),
+      );
+    }
+  });
+
   return SourceControlProvider.SourceControlProvider.of({
     kind: KIND,
     refineRepositoryIdentity,
     getChangeRequest: Effect.fn("TangledSourceControlProvider.getChangeRequest")((input) =>
       getPull(input).pipe(Effect.map(({ pull }) => pull)),
     ),
-    listChangeRequests: Effect.fn("TangledSourceControlProvider.listChangeRequests")(
-      function* (input) {
-        const operation = "listChangeRequests";
-        const target = yield* resolveTarget(operation, input);
-        const branch = SourceControlProvider.sourceBranch(input);
-        const owner = SourceControlProvider.sourceControlRefFromInput(input)?.owner?.toLowerCase();
-        const limit = input.limit ?? 20;
-        const viewer = Option.getOrNull(yield* auth.viewer);
-        const states: ReadonlyArray<TangledApi.TicketState> =
-          input.state === "all" ? ["open", "completed", "closed"] : [ticketState(input.state)];
-        const found: Array<ChangeRequest> = [];
-        for (const state of states) {
-          let cursor: string | null = null;
-          let scanned = 0;
-          do {
-            const page: TangledApi.TangledPage<TangledApi.TangledTicket> = yield* api
-              .listPulls({ repoDid: target.repoDid, state, limit: PAGE_SIZE, cursor })
-              .pipe(Effect.mapError(fromApi(operation, input.cwd)));
-            scanned += page.items.length;
-            // Bobbin ignores its author filter, so narrowing to the viewer's own happens here.
-            const candidates = page.items.filter(
-              (ticket) =>
-                ticketNumber(ticket.rkey) !== null &&
-                ticket.targetBranch.length > 0 &&
-                (viewer === null || ticket.authorDid === viewer.did),
-            );
-            const matches = yield* Effect.forEach(
-              candidates,
-              (ticket) =>
-                api
-                  .listRounds(ticket.uri)
-                  .pipe(
-                    Effect.map((rounds) =>
-                      latest(rounds)?.sourceBranch === branch ? { ticket, rounds } : null,
-                    ),
-                  ),
-              { concurrency: 8 },
-            ).pipe(Effect.mapError(fromApi(operation, input.cwd)));
-            for (const match of matches) {
-              if (match === null || found.length >= limit) continue;
-              const pull = yield* toChangeRequest(target, match.ticket, match.rounds);
-              if (pull === null) continue;
-              if (owner !== undefined && pull.headRepositoryOwnerLogin?.toLowerCase() !== owner)
-                continue;
-              found.push(pull);
-            }
-            cursor = page.cursor;
-          } while (cursor !== null && scanned < BRANCH_SCAN_LIMIT && found.length < limit);
-        }
-        return found;
-      },
-    ),
+    listChangeRequests,
+    branchPushed,
     createChangeRequest: Effect.fn("TangledSourceControlProvider.createChangeRequest")(
       function* (input) {
         const operation = "createChangeRequest";
@@ -302,41 +360,17 @@ export const make = Effect.gen(function* () {
         const source = sourceRef?.repository
           ? yield* resolveTarget(operation, { cwd: input.cwd, repository: sourceRef.repository })
           : target;
-        const sourceBranch = SourceControlProvider.sourceBranch(input);
-        const targetBranch = input.target?.refName ?? input.baseRefName;
+        const roundSource = {
+          target,
+          targetBranch: input.target?.refName ?? input.baseRefName,
+          sourceRepoDid: source.repoDid,
+          sourceBranch: SourceControlProvider.sourceBranch(input),
+        };
         const failed = fromApi(operation, input.cwd);
         // The branch was pushed already; propose what the host has, as `tg pr create` does.
-        const [head, targetTip] = yield* Effect.all(
-          [
-            api.getRef({ repoDid: source.repoDid, ref: `refs/heads/${sourceBranch}` }),
-            api.getRef({ repoDid: target.repoDid, ref: `refs/heads/${targetBranch}` }),
-          ],
-          { concurrency: 2 },
-        ).pipe(Effect.mapError(failed));
-        if (head === null)
-          return yield* error(
-            operation,
-            input.cwd,
-            `Tangled does not have ${sourceBranch} yet. Push it, then try again.`,
-          );
-        if (targetTip === null)
-          return yield* error(operation, input.cwd, `Tangled has no ${targetBranch} branch.`);
-        const base = yield* api
-          .getMergeBase({
-            repoDids:
-              source.repoDid === target.repoDid
-                ? [target.repoDid]
-                : [target.repoDid, source.repoDid],
-            base: targetTip,
-            head,
-          })
-          .pipe(Effect.mapError(failed));
-        if (base === head)
-          return yield* error(
-            operation,
-            input.cwd,
-            `${sourceBranch} has no commits that ${targetBranch} lacks.`,
-          );
+        const round = yield* TangledRound.proposeRound(api, roundSource).pipe(
+          Effect.mapError(failed),
+        );
         const body = yield* fileSystem
           .readFileString(input.bodyFile)
           .pipe(
@@ -358,7 +392,7 @@ export const make = Effect.gen(function* () {
                   ? {}
                   : { body: { $type: "org.tangled.markup.markdown", text: body } }),
                 state: "open",
-                targetBranch,
+                targetBranch: roundSource.targetBranch,
                 createdAt: DateTime.formatIso(yield* DateTime.now),
               },
             },
@@ -371,41 +405,30 @@ export const make = Effect.gen(function* () {
             "Tangled accepted the pull request without naming it.",
           );
         const rkey = ticket.uri.slice(ticket.uri.lastIndexOf("/") + 1);
-        yield* api
-          .write({
-            service: "knot",
-            repository: target,
-            nsid: TangledApi.NSID.submitPatch,
-            body: {
-              patch: {
-                ticket: rkey,
-                base: { oid: base },
-                head: { oid: head },
-                sourceRepo: source.repoDid,
-                sourceBranch,
-              },
-            },
-          })
-          .pipe(
-            Effect.catch((cause) =>
-              // Only a definite refusal leaves nothing behind worth keeping; a lost reply may not.
-              (TangledApi.isDefiniteRejection(cause)
-                ? api
-                    .write({
-                      service: "knot",
-                      repository: target,
-                      nsid: TangledApi.NSID.deleteRecord,
-                      body: {
-                        collection: TangledApi.COLLECTION.ticket,
-                        rkey,
-                        swapRecord: ticket.cid,
-                      },
-                    })
-                    .pipe(Effect.ignore)
-                : Effect.void
-              ).pipe(Effect.andThen(Effect.fail(failed(cause)))),
-            ),
-          );
+        yield* TangledRound.submitRound(api, {
+          ...roundSource,
+          ...round,
+          ticketUri: ticket.uri,
+        }).pipe(
+          Effect.catch((cause) =>
+            // Only a definite refusal leaves nothing behind worth keeping; a lost reply may not.
+            (TangledApi.isDefiniteRejection(cause)
+              ? api
+                  .write({
+                    service: "knot",
+                    repository: target,
+                    nsid: TangledApi.NSID.deleteRecord,
+                    body: {
+                      collection: TangledApi.COLLECTION.ticket,
+                      rkey,
+                      swapRecord: ticket.cid,
+                    },
+                  })
+                  .pipe(Effect.ignore)
+              : Effect.void
+            ).pipe(Effect.andThen(Effect.fail(failed(cause)))),
+          ),
+        );
       },
     ),
     getRepositoryCloneUrls: Effect.fn("TangledSourceControlProvider.getRepositoryCloneUrls")(

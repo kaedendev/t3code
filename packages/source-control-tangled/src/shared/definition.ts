@@ -199,7 +199,7 @@ export const definition = defineSourceControl({
   commitUrl: (input) => buildCommitUrl({ ...input, host: TANGLED_WEB_HOST }, "commit"),
   parseCommitUrl,
   changeRequestUrlFromReferenceAutolink: () => null,
-  changeRequestActions: new Set(["close", "reopen", "merge"] as const),
+  changeRequestActions: new Set(["close", "reopen", "merge", "resubmit"] as const),
   checkoutCommand: ({ number }) => `tg pr checkout ${number}`,
   changeRequestCloseCommand: /\btg\s+pr\s+(?:merge|close)\b/u,
   changeRequestCreateCommand: /\btg\s+pr\s+create\b/u,

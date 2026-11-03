@@ -25,6 +25,7 @@ import * as TangledApi from "./TangledApi.ts";
 import { TangledAuth, type TangledAuthError } from "./TangledAuth.ts";
 import { pullRequestUrl, ticketNumber } from "./TangledSourceControlProvider.ts";
 import * as TangledPatch from "./tangledPatch.ts";
+import * as TangledRound from "./tangledRound.ts";
 
 const KIND = SourceControlProviderKind.make("tangled");
 
@@ -241,6 +242,7 @@ export const make = Effect.gen(function* () {
   const permissionsFor = Effect.fn("TangledPullRequestProvider.permissionsFor")(function* (
     repository: TangledApi.TangledRepository,
     ticket: TangledApi.TangledTicket,
+    round: TangledApi.TangledRound,
   ) {
     const viewer = Option.getOrNull(yield* auth.viewer);
     if (viewer === null) return NO_PERMISSIONS;
@@ -248,10 +250,21 @@ export const make = Effect.gen(function* () {
       .listMaintainers(repository)
       .pipe(Effect.orElseSucceed((): ReadonlySet<string> => new Set([repository.ownerDid])));
     const maintainer = maintainers.has(viewer.did);
-    const steward = maintainer || ticket.authorDid === viewer.did;
+    const author = ticket.authorDid === viewer.did;
+    const steward = maintainer || author;
+    // Tangled's web offers Resubmit to the author once the branch has moved past the latest round.
+    const branchTip =
+      author && ticket.state === "open" && round.sourceBranch !== null
+        ? yield* api
+            .getRef({ repoDid: round.sourceRepoDid, ref: `refs/heads/${round.sourceBranch}` })
+            .pipe(Effect.orElseSucceed(() => null))
+        : null;
+    const resubmittable = branchTip !== null && branchTip !== round.headOid;
     return {
       ...NO_PERMISSIONS,
-      actions: CAPABILITIES.actions.filter((action) => (action === "merge" ? maintainer : steward)),
+      actions: CAPABILITIES.actions.filter((action) =>
+        action === "merge" ? maintainer : action === "resubmit" ? resubmittable : steward,
+      ),
       comment: true,
       editChangeRequest: steward,
     } satisfies PullRequestViewerPermissions;
@@ -452,6 +465,29 @@ export const make = Effect.gen(function* () {
     yield* complete(operation, repository, ticket.rkey);
   });
 
+  /** The source branch's tip as the next round; nothing when the latest round already has it. */
+  const resubmit = Effect.fn("TangledPullRequestProvider.resubmit")(function* (ref: PullRef) {
+    const operation = "resubmit";
+    const { repository, ticket, round } = yield* loadPull(operation, ref);
+    if (ticket.state !== "open")
+      return yield* failure(operation, "Only an open pull request can be resubmitted.");
+    if (round.sourceBranch === null)
+      return yield* failure(operation, "The pull request names no source branch.");
+    const source = {
+      target: repository,
+      targetBranch: ticket.targetBranch,
+      sourceRepoDid: round.sourceRepoDid,
+      sourceBranch: round.sourceBranch,
+    };
+    const next = yield* TangledRound.proposeRound(api, source).pipe(
+      Effect.mapError(fail(operation)),
+    );
+    if (next.head === round.headOid) return;
+    yield* TangledRound.submitRound(api, { ...source, ...next, ticketUri: ticket.uri }).pipe(
+      Effect.mapError(fail(operation)),
+    );
+  });
+
   const provider: PullRequestProviderApi = {
     kind: KIND,
     capabilities: CAPABILITIES,
@@ -531,7 +567,7 @@ export const make = Effect.gen(function* () {
               headCommit: round.headOid,
             })
             .pipe(Effect.option),
-          permissionsFor(repository, ticket),
+          permissionsFor(repository, ticket, round),
           ticket.state !== "open"
             ? Effect.succeed("unknown" as const)
             : api
@@ -660,12 +696,8 @@ export const make = Effect.gen(function* () {
 
     getViewerPermissions: Effect.fn("TangledPullRequestProvider.getViewerPermissions")(
       function* (input) {
-        const operation = "getViewerPermissions";
-        const repository = yield* repositoryOf(operation, input);
-        const ticket = yield* api
-          .getTicket({ repoDid: repository.repoDid, rkey: String(input.number) })
-          .pipe(Effect.mapError(fail(operation)));
-        return yield* permissionsFor(repository, ticket);
+        const { repository, ticket, round } = yield* loadPull("getViewerPermissions", input);
+        return yield* permissionsFor(repository, ticket, round);
       },
     ),
 
@@ -733,6 +765,7 @@ export const make = Effect.gen(function* () {
           return yield* failure(operation, "Tangled merges by rebase only.");
         return yield* merge(input);
       }
+      if (input.action === "resubmit") return yield* resubmit(input);
       if (input.action !== "close" && input.action !== "reopen")
         return yield* failure(operation, `Tangled pull requests cannot ${input.action}.`);
       const repository = yield* repositoryOf(operation, input);

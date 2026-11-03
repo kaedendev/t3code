@@ -209,6 +209,84 @@ describe("TangledPullRequestProvider merge", () => {
   });
 });
 
+describe("TangledPullRequestProvider resubmit", () => {
+  const MOVED = "e".repeat(40);
+  const ALICE = { did: OWNER, handle: "alice.tngl.sh" };
+  const ref = { cwd: "/repo", host: "tangled.org", repository: "alice.tngl.sh/project", number: 7 };
+  /** #7 is Alice's; `feature` is at `tip`, and a submitted round shows up in listPatches. */
+  const resubmitRoutes = (tip: string, state = "open") => {
+    let submitted = false;
+    return routes({
+      state,
+      "org.tangled.temp.git.getRef": (request: RecordedRequest) => ({
+        body: { oid: request.params.get("ref") === "refs/heads/feature" ? tip : TIP },
+      }),
+      "org.tangled.temp.git.getMergeBase": { commit: BASE },
+      "org.tangled.temp.review.listPatches": () => ({
+        body: {
+          items: submitted
+            ? [
+                round("bafyround"),
+                {
+                  ...round("bafynext"),
+                  value: { ...round("bafynext").value, head: { oid: MOVED } },
+                },
+              ]
+            : [round("bafyround")],
+        },
+      }),
+      "org.tangled.review.submitPatch": () => {
+        submitted = true;
+        return { body: { uri: `at://${REPO}/org.tangled.review.patch/bafynext`, cid: "bafynext" } };
+      },
+    });
+  };
+  const offered = (fake: ReturnType<typeof fakeTangled>) =>
+    Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      const permissions = yield* provider.getViewerPermissions(ref);
+      return permissions.actions.includes("resubmit");
+    }).pipe(Effect.provide(fake.layer));
+
+  it.effect("is offered to the author of an open pull request whose branch moved on", () =>
+    Effect.gen(function* () {
+      assert.isTrue(yield* offered(fakeTangled(resubmitRoutes(MOVED), { viewer: ALICE })));
+      assert.isFalse(
+        yield* offered(fakeTangled(resubmitRoutes(HEAD), { viewer: ALICE })),
+        "the latest round has the branch's head",
+      );
+      assert.isFalse(
+        yield* offered(fakeTangled(resubmitRoutes(MOVED, "closed"), { viewer: ALICE })),
+        "closed",
+      );
+      assert.isFalse(yield* offered(fakeTangled(resubmitRoutes(MOVED))), "not the author");
+    }),
+  );
+
+  it.effect("submits the branch's head as the next round", () => {
+    const fake = fakeTangled(resubmitRoutes(MOVED), { viewer: ALICE });
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      yield* provider.runAction({ ...ref, action: "resubmit" });
+      assert.deepStrictEqual(
+        fake.writes().map((write) => write.body),
+        [
+          {
+            repo: REPO,
+            patch: {
+              ticket: "7",
+              base: { oid: BASE },
+              head: { oid: MOVED },
+              sourceRepo: REPO,
+              sourceBranch: "feature",
+            },
+          },
+        ],
+      );
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
 // tangled.org/core#4618, from a fork: round 2 amended round 1, round 3 only rebased round 2.
 const CORE = "did:plc:j5hmlfdrwkvtxm7cjmu7j2is";
 const FORK = "did:plc:ueozxjczm32mgsvmfvnbyhyr";

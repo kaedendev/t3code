@@ -3091,6 +3091,58 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("tells the host of each push, and keeps the push when the host refuses", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "HEAD:main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/rounds"]);
+      const commit = (file: string) =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(NodePath.join(repoDir, file), `${file}\n`);
+          yield* runGit(repoDir, ["add", file]);
+          yield* runGit(repoDir, ["commit", "-m", file]);
+          return (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        });
+
+      const told: Array<{ branch: string; headSha: string }> = [];
+      const { service } = createFakeSourceControlProvider();
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          branchPushed: ({ branch, headSha }) =>
+            Effect.sync(() => told.push({ branch, headSha })).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new SourceControlProviderFailure({
+                    provider: SourceControlProviderKind.make("tangled"),
+                    operation: "branchPushed",
+                    cwd: repoDir,
+                    detail: "The pull request was not resubmitted.",
+                  }),
+                ),
+              ),
+            ),
+        },
+      });
+      const first = yield* commit("one.txt");
+      const pushed = yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+      expect(pushed.push.status).toBe("pushed");
+      expect(pushed.toast.description).toBe("The pull request was not resubmitted.");
+
+      const second = yield* commit("two.txt");
+      yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+      const upToDate = yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+      expect(upToDate.push.status).toBe("skipped_up_to_date");
+      expect(told).toEqual([
+        { branch: "feature/rounds", headSha: first },
+        { branch: "feature/rounds", headSha: second },
+      ]);
+    }),
+  );
+
   it.effect("captures the PR temp directory when constructing the manager", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

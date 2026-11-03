@@ -280,4 +280,114 @@ describe("TangledSourceControlProvider", () => {
       });
     }).pipe(Effect.provide(layerFor(fake)));
   });
+
+  describe("after T3 pushes a branch", () => {
+    const PUSHED = "e".repeat(40);
+    const SOMEONE = "did:plc:someoneelseaaaaaaaaaaaaa";
+    const round = (cid: string, head: string) => ({
+      uri: `at://${REPO}/org.tangled.review.patch/${cid}`,
+      cid,
+      value: {
+        base: { oid: BASE },
+        head: { oid: head },
+        source: { branch: "feature", repo: REPO },
+        createdAt: "2026-11-02T10:00:00Z",
+      },
+    });
+    /** #7 is the viewer's and #8 someone else's, both proposing `feature` at `latest`. */
+    const pushRoutes = (latest: string): Record<string, FakeRoute> => {
+      let submitted = false;
+      return {
+        ...world("alice.tngl.sh", "new-name"),
+        "org.tangled.repo.listPulls": { items: [ticket("7", KAEDEN.did), ticket("8", SOMEONE)] },
+        "org.tangled.temp.review.listPatches": () => ({
+          body: {
+            items: submitted
+              ? [round("bafyround", latest), round("bafynext", PUSHED)]
+              : [round("bafyround", latest)],
+          },
+        }),
+        "org.tangled.temp.git.getRef": (request: RecordedRequest) => ({
+          body: { oid: request.params.get("ref") === "refs/heads/feature" ? PUSHED : TIP },
+        }),
+        "org.tangled.temp.git.getMergeBase": { commit: BASE },
+        "org.tangled.review.submitPatch": () => {
+          submitted = true;
+          return {
+            body: { uri: `at://${REPO}/org.tangled.review.patch/bafynext`, cid: "bafynext" },
+          };
+        },
+      };
+    };
+    const remote = TestSourceControlHost.layer({
+      git: {
+        resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+        readConfigValue: () => Effect.succeed("git@tangled.org:alice.tngl.sh/new-name"),
+      },
+    });
+    const pushedLayer = (fake: ReturnType<typeof fakeTangled>) =>
+      Layer.mergeAll(fake.layer, remote, FileSystem.layerNoop({}));
+    const push = Effect.gen(function* () {
+      const provider = yield* TangledSourceControlProvider.make;
+      yield* provider.branchPushed!({ cwd: "/repo", branch: "feature", headSha: PUSHED });
+    });
+
+    it.effect("submits the pushed head as the next round of the viewer's pull request", () => {
+      const fake = fakeTangled(pushRoutes(HEAD));
+      return Effect.gen(function* () {
+        yield* push;
+        assert.deepStrictEqual(
+          fake.writes().map((write) => write.body),
+          [
+            {
+              repo: REPO,
+              patch: {
+                ticket: "7",
+                base: { oid: BASE },
+                head: { oid: PUSHED },
+                sourceRepo: REPO,
+                sourceBranch: "feature",
+              },
+            },
+          ],
+        );
+        assert.deepStrictEqual(fake.minted, [{ aud: REPO, lxm: "org.tangled.review.submitPatch" }]);
+      }).pipe(Effect.provide(pushedLayer(fake)));
+    });
+
+    it.effect("names the pull request it could not resubmit", () => {
+      const fake = fakeTangled({
+        ...pushRoutes(HEAD),
+        "org.tangled.review.submitPatch": () => ({
+          status: 400,
+          body: { error: "InvalidRequest", message: "head is not on feature" },
+        }),
+      });
+      return Effect.gen(function* () {
+        const error = yield* push.pipe(Effect.flip);
+        assert.strictEqual(
+          error.detail,
+          "Pull request #7 was not resubmitted. head is not on feature",
+        );
+      }).pipe(Effect.provide(pushedLayer(fake)));
+    });
+
+    it.effect("submits nothing when the latest round already has the pushed head", () => {
+      const fake = fakeTangled(pushRoutes(PUSHED));
+      return Effect.gen(function* () {
+        yield* push;
+        assert.deepStrictEqual(fake.writes(), []);
+      }).pipe(Effect.provide(pushedLayer(fake)));
+    });
+
+    it.effect("leaves someone else's pull request for the branch alone", () => {
+      const fake = fakeTangled(pushRoutes(HEAD), {
+        viewer: { did: SOMEONE.replace("someone", "stranger"), handle: "stranger.example" },
+      });
+      return Effect.gen(function* () {
+        yield* push;
+        assert.deepStrictEqual(fake.writes(), []);
+      }).pipe(Effect.provide(pushedLayer(fake)));
+    });
+  });
 });

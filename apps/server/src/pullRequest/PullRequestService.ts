@@ -328,6 +328,8 @@ const ACTION_ACCESS_REFUSALS: Record<PullRequestAction, string> = {
   "delete-branch": "You need write access on the source repository to delete its branch.",
   "approve-workflows":
     "You need write access on this repository to approve workflows from a fork pull request.",
+  resubmit:
+    "Only the author of an open change request can resubmit it, once its branch has moved past the latest round.",
 };
 
 const REVIEWER_REQUEST_REFUSAL = "You need write access on this repository to ask for a review.";
