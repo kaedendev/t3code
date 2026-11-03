@@ -271,6 +271,9 @@ const VcsStatusRemoteShape = {
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   aheadOfDefaultCount: Schema.optional(NonNegativeInt),
+  // The upstream holds only earlier versions of local changes, so a push replaces them. Those
+  // versions are not counted as behind.
+  rewritesUpstream: Schema.optional(Schema.Boolean),
   pr: Schema.NullOr(VcsStatusChangeRequest),
 };
 

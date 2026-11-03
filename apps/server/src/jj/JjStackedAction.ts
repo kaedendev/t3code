@@ -14,6 +14,7 @@ import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/source-control-core/shar
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import {
+  followPushedBranch,
   isCommitAction,
   resolveCommitAndBranchSuggestion,
   resolveTextGenerationSettings,
@@ -329,7 +330,7 @@ export const makeJjStackedAction = (deps: JjStackedActionDeps): JjStackedActionO
           })
         : { status: "skipped_not_requested" as const };
 
-      const push = wantsPush
+      const pushed = wantsPush
         ? yield* Effect.gen(function* () {
             yield* Ref.set(currentPhase, "push");
             yield* emit({ kind: "phase_started", phase: "push", label: "Pushing..." });
@@ -350,13 +351,36 @@ export const makeJjStackedAction = (deps: JjStackedActionDeps): JjStackedActionO
               remoteName,
               operation: "JjStackedAction.pushPhase",
             });
+            // The host reads its remote from the main workspace; a secondary one has no `.git`.
+            const providerCwd = yield* driver.repoPaths(cwd).pipe(
+              Effect.map((paths) => paths.mainWorkspaceRoot),
+              Effect.orElseSucceed(() => cwd),
+            );
+            const note =
+              result.status === "pushed"
+                ? yield* followPushedBranch({
+                    provider: yield* sourceControlProviders
+                      .resolve({ cwd: providerCwd })
+                      .pipe(Effect.orElseSucceed(() => null)),
+                    cwd: providerCwd,
+                    branch: result.refName,
+                    headSha: driver.changeAt(cwd, localBookmarkRevset(result.refName)).pipe(
+                      Effect.flatMap(Effect.fromNullishOr),
+                      Effect.map((change) => change.commitId),
+                    ),
+                  })
+                : null;
             return {
-              status: result.status,
-              branch: result.refName,
-              upstreamBranch: `${remoteName}/${result.refName}`,
+              result: {
+                status: result.status,
+                branch: result.refName,
+                upstreamBranch: `${remoteName}/${result.refName}`,
+              },
+              note,
             };
           })
-        : { status: "skipped_not_requested" as const };
+        : { result: { status: "skipped_not_requested" as const }, note: null };
+      const push = pushed.result;
 
       const pr = wantsPr
         ? yield* Effect.gen(function* () {
@@ -380,13 +404,11 @@ export const makeJjStackedAction = (deps: JjStackedActionDeps): JjStackedActionO
         commit,
         push,
         pr,
-        toast: yield* buildToast(cwd, {
-          action: input.action,
-          branch: branchStep,
-          commit,
-          push,
-          pr,
-        }),
+        toast: yield* buildToast(
+          cwd,
+          { action: input.action, branch: branchStep, commit, push, pr },
+          pushed.note,
+        ),
       };
       yield* emit({ kind: "action_finished", result });
       return result;
@@ -493,12 +515,13 @@ export const makeJjStackedAction = (deps: JjStackedActionDeps): JjStackedActionO
   const buildToast = Effect.fn("JjStackedAction.buildToast")(function* (
     cwd: string,
     result: Pick<GitRunStackedActionResult, "action" | "branch" | "commit" | "push" | "pr">,
+    pushNote: string | null,
   ) {
     const terms = yield* sourceControlProviders.resolve({ cwd }).pipe(
       Effect.map((provider) => sourceControlDefinitions.get(provider.kind).changeRequest),
       Effect.orElseSucceed(() => UNKNOWN_SOURCE_CONTROL_CLIENT.changeRequest),
     );
-    const summary = summarizeGitActionResult(result, terms);
+    const summary = summarizeGitActionResult(result, terms, pushNote);
     const isDefaultRef =
       result.push.branch !== undefined &&
       result.push.branch ===

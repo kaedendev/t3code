@@ -17,6 +17,8 @@ import type {
   ProjectId,
   PullRequestReviewCapabilities,
   PullRequestReviewerCapabilities,
+  PullRequestRound,
+  PullRequestRoundSelection,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import type { ServerSettings } from "@t3tools/contracts";
@@ -31,7 +33,10 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import { fakePullRequestProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import {
+  fakePullRequestProvider,
+  fakeRoundsPullRequestProvider,
+} from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -2440,8 +2445,9 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
 
 it.effect("a refresh or a finished turn drops the provider's own change request reads", () =>
   Effect.gen(function* () {
-    const forgotten: Array<{ readonly repository: string; readonly number?: number } | undefined> =
-      [];
+    type Scope = { readonly repository: string; readonly number?: number } | undefined;
+    const forgotten: Array<Scope> = [];
+    const forgottenElsewhere: Array<Scope> = [];
     const service = yield* makeService({
       projects: [
         project({
@@ -2456,6 +2462,10 @@ it.effect("a refresh or a finished turn drops the provider's own change request 
         fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
           forgetChangeRequestReads: (scope) => Effect.sync(() => void forgotten.push(scope)),
         }),
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          forgetChangeRequestReads: (scope) =>
+            Effect.sync(() => void forgottenElsewhere.push(scope)),
+        }),
       ],
     });
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
@@ -2469,6 +2479,8 @@ it.effect("a refresh or a finished turn drops the provider's own change request 
       undefined,
       undefined,
     ]);
+    // Another host's provider holds none of the reference's reads; only a full refresh reaches it.
+    assert.deepStrictEqual(forgottenElsewhere, [undefined, undefined]);
   }),
 );
 
@@ -4428,6 +4440,75 @@ it.effect("pauses uncached activity on a host after one activity read is rate li
   }),
 );
 
+const ROUNDS: ReadonlyArray<PullRequestRound> = [1, 2, 3].map((number) => ({
+  number,
+  baseSha: "b".repeat(64),
+  headSha: String(number).repeat(64),
+  createdAt: `2026-10-0${number}T00:00:00.000Z`,
+}));
+
+it.effect("reads rounds with the activity and keeps each round's diff apart", () =>
+  Effect.gen(function* () {
+    const asked: Array<PullRequestRoundSelection | undefined> = [];
+    const emptyDiff = { patch: "", truncated: false, nextCursor: null };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeRoundsPullRequestProvider("github", ROUNDS, {
+          getChangeRequestActivity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+          getDiff: (input) => Effect.sync(() => (asked.push(input.round), emptyDiff)),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    assert.deepStrictEqual((yield* service.activity(ref)).rounds, ROUNDS);
+    yield* service.diff({ ...ref, round: { number: 1 } });
+    yield* service.diff({ ...ref, round: { number: 3, since: 1 } });
+    yield* service.diff({ ...ref, round: { since: 1, number: 3 } });
+    yield* service.diff({ ...ref, round: { number: 3, since: 2 } });
+    yield* service.diff(ref);
+    assert.deepStrictEqual(asked, [
+      { number: 1 },
+      { number: 3, since: 1 },
+      { number: 3, since: 2 },
+      undefined,
+    ]);
+  }),
+);
+
+it.effect("refuses a round on a host that keeps none instead of serving the whole change", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getDiff: () => Effect.die("A host without rounds must not be asked for one"),
+          getDiffFileContents: () => Effect.die("A host without rounds must not be asked for one"),
+          getDiffFilePaths: () =>
+            Effect.succeed({ files: [{ oldPath: "a.ts", newPath: "a.ts" }], nextCursor: null }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const round = { number: 2, since: 1 };
+
+    const diff = yield* service.diff({ ...ref, round }).pipe(Effect.flip);
+    const contents = yield* service
+      .diffFileContents({ ...ref, round, changeType: "change", oldPath: "a.ts", newPath: "a.ts" })
+      .pipe(Effect.flip);
+    assert.strictEqual(diff._tag, "PullRequestOperationError");
+    assert.strictEqual(contents._tag, "PullRequestOperationError");
+  }),
+);
+
 it.effect("authorizes cold source reads with paginated paths without fetching patch hunks", () =>
   Effect.gen(function* () {
     const pages: Array<string | undefined> = [];
@@ -4646,7 +4727,7 @@ it.effect(
 );
 
 // Refresh and expiry are covered by the in-flight test below; repository and number share the ref key.
-it.effect.each(["commit", "credential"] as const)(
+it.effect.each(["commit", "round", "credential"] as const)(
   "does not reuse loaded diff membership after changing %s",
   (boundary) =>
     Effect.gen(function* () {
@@ -4658,7 +4739,7 @@ it.effect.each(["commit", "credential"] as const)(
           project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
         ],
         providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          fakeRoundsPullRequestProvider("github", ROUNDS, {
             withVerifiedCredential: (_, use) =>
               Effect.suspend(() =>
                 use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
@@ -4687,8 +4768,13 @@ it.effect.each(["commit", "credential"] as const)(
         host: "github.com",
         expectedAccountId: "101",
       };
-      // Load at a commit and expand without one so the commit must be part of the membership key.
-      const loaded = boundary === "commit" ? { ...ref, commit: "a".repeat(40) } : ref;
+      // Load at a commit or round and expand without one, so the pin must be in the membership key.
+      const loaded =
+        boundary === "commit"
+          ? { ...ref, commit: "a".repeat(40) }
+          : boundary === "round"
+            ? { ...ref, round: { number: 1 } }
+            : ref;
       yield* service.withRoutingCredential(loaded, service.diff(loaded));
       if (boundary === "credential") credential = "restricted";
       const input = {
@@ -4707,74 +4793,80 @@ it.effect.each(["commit", "credential"] as const)(
     }),
 );
 
-it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "refresh"] as const)(
-  "keeps a loaded diff's original membership scope through an in-flight %s",
-  (boundary) =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      let diffReads = 0;
-      const service = yield* makeService({
-        projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-        ],
-        providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            getDiff: () =>
-              Effect.gen(function* () {
-                if (++diffReads !== 1) return { patch: "", truncated: false, nextCursor: null };
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-                return {
-                  patch: `diff --git a/private.ts b/private.ts\n--- a/private.ts\n+++ b/private.ts\n+${"x".repeat(300_000)}\n`,
-                  truncated: false,
-                  nextCursor: null,
-                };
-              }),
-            getDiffFileContents: () => Effect.succeed({ oldContents: "old", newContents: "new" }),
-          }),
-        ],
-      });
-      const ref = {
-        projectId: "p1" as ProjectId,
-        repository: "acme/web",
-        number: 1,
-        ...(boundary.includes("commit") ? { commit: "a".repeat(40) } : {}),
-      };
-      const loading = yield* Effect.forkChild(service.diff(ref));
-      yield* Deferred.await(started);
-      if (boundary === "expiry") yield* TestClock.adjust("61 seconds");
-      else if (boundary === "commit expiry") yield* TestClock.adjust("11 minutes");
-      else if (boundary.includes("cache hit")) yield* TestClock.adjust("30 seconds");
-      else yield* service.invalidate({ reference: ref });
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(loading);
-      if (boundary.includes("cache hit")) {
-        yield* service.diff(ref);
-        yield* service.diff(ref);
-        yield* TestClock.adjust(boundary.includes("commit") ? "9 minutes" : "29 seconds");
-        assert.deepStrictEqual(
-          yield* service.diffFileContents({
-            ...ref,
-            changeType: "change",
-            oldPath: "private.ts",
-            newPath: "private.ts",
-          }),
-          { oldContents: "old", newContents: "new" },
-        );
-        assert.strictEqual(diffReads, 1);
-        yield* TestClock.adjust(boundary.includes("commit") ? "1 minute" : "2 seconds");
-      }
-      const error = yield* service
-        .diffFileContents({
+it.effect.each([
+  "expiry",
+  "commit expiry",
+  "round expiry",
+  "cache hit",
+  "commit cache hit",
+  "round cache hit",
+  "refresh",
+] as const)("keeps a loaded diff's original membership scope through an in-flight %s", (boundary) =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let diffReads = 0;
+    const pinned = boundary.includes("commit") || boundary.includes("round");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeRoundsPullRequestProvider("github", ROUNDS, {
+          getDiff: () =>
+            Effect.gen(function* () {
+              if (++diffReads !== 1) return { patch: "", truncated: false, nextCursor: null };
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return {
+                patch: `diff --git a/private.ts b/private.ts\n--- a/private.ts\n+++ b/private.ts\n+${"x".repeat(300_000)}\n`,
+                truncated: false,
+                nextCursor: null,
+              };
+            }),
+          getDiffFileContents: () => Effect.succeed({ oldContents: "old", newContents: "new" }),
+        }),
+      ],
+    });
+    const ref = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      ...(boundary.includes("commit") ? { commit: "a".repeat(40) } : {}),
+      ...(boundary.includes("round") ? { round: { number: 3, since: 1 } } : {}),
+    };
+    const loading = yield* Effect.forkChild(service.diff(ref));
+    yield* Deferred.await(started);
+    if (boundary === "expiry") yield* TestClock.adjust("61 seconds");
+    else if (pinned && boundary.includes("expiry")) yield* TestClock.adjust("11 minutes");
+    else if (boundary.includes("cache hit")) yield* TestClock.adjust("30 seconds");
+    else yield* service.invalidate({ reference: ref });
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(loading);
+    if (boundary.includes("cache hit")) {
+      yield* service.diff(ref);
+      yield* service.diff(ref);
+      yield* TestClock.adjust(pinned ? "9 minutes" : "29 seconds");
+      assert.deepStrictEqual(
+        yield* service.diffFileContents({
           ...ref,
           changeType: "change",
           oldPath: "private.ts",
           newPath: "private.ts",
-        })
-        .pipe(Effect.flip);
-      assert.strictEqual(error._tag, "PullRequestOperationError");
-      assert.strictEqual(error.reason, "not-found");
-      assert.strictEqual(diffReads, 2);
-    }),
+        }),
+        { oldContents: "old", newContents: "new" },
+      );
+      assert.strictEqual(diffReads, 1);
+      yield* TestClock.adjust(pinned ? "1 minute" : "2 seconds");
+    }
+    const error = yield* service
+      .diffFileContents({
+        ...ref,
+        changeType: "change",
+        oldPath: "private.ts",
+        newPath: "private.ts",
+      })
+      .pipe(Effect.flip);
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(error.reason, "not-found");
+    assert.strictEqual(diffReads, 2);
+  }),
 );

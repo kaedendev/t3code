@@ -6,10 +6,11 @@ import {
   SettingsSecretValue,
   SourceControlProviderKind,
   type SourceControlProviderInfo,
+  type SourceControlRepositoryVisibility,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
-import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { userlessScpRemoteHost } from "@t3tools/shared/sourceControl";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -181,23 +182,27 @@ export interface SourceControlHostCredentials {
   /** What a token must be granted, completing "Give it …". */
   readonly tokenAccess: string;
   readonly newTokenUrl: (host: string) => string;
-  /** Signing in through the forge's own app instead of a token or CLI login. */
-  readonly appSignIn?: SourceControlAppSignIn;
 }
 
 /**
- * A forge app the server signs in to with a device code, on the hosts it is registered on. The
- * session it keeps is the `signIns` setting, which takes precedence over everything but a saved
- * token.
+ * A forge app the server signs in to, on the hosts it is registered on. The session it keeps is
+ * the `signIns` setting, which takes precedence over everything but a saved token.
  */
 export interface SourceControlAppSignIn {
   /** The app's name on the forge, as the consent screen shows it. */
   readonly appName: string;
   readonly hosts: ReadonlyArray<string>;
-  /** Where an account or organization installs the app so it can reach its repositories. */
-  readonly installUrl: string;
+  /** What signing in gets the user, shown before they sign in. */
+  readonly summary: string;
+  /**
+   * Set when the sign-in starts from the user's account, as atproto must find the account's PDS
+   * before it can ask for consent. Clients ask for it and pass it as the sign-in's `account`.
+   */
+  readonly account?: { readonly label: string; readonly placeholder: string };
+  /** Where an account or organization installs the app; absent when there is nothing to install. */
+  readonly installUrl?: string;
   /** Where the user revokes the app's access entirely. */
-  readonly revokeUrl: string;
+  readonly revokeUrl?: string;
 }
 
 export const SourceControlHostName = TrimmedNonEmptyString.pipe(
@@ -210,6 +215,16 @@ export const HostAccountChoice = Schema.Struct({
 });
 export type HostAccountChoice = typeof HostAccountChoice.Type;
 
+/** The settings of a host with an `appSignIn`. */
+export const appSignInSettingsFields = {
+  /** The serialized session of an `appSignIn` per lower-case hostname, owned by the server's driver. */
+  signIns: Schema.Record(SourceControlHostName, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+};
+
 /** Per-hostname settings of a host with `credentials`, keyed by lower-case hostname. */
 export const hostCredentialSettingsFields = {
   hosts: Schema.Record(SourceControlHostName, HostAccountChoice).pipe(
@@ -221,12 +236,7 @@ export const hostCredentialSettingsFields = {
     secretSetting,
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
   ),
-  /** The serialized session of an `appSignIn`, owned by the server's driver. */
-  signIns: Schema.Record(SourceControlHostName, TrimmedString).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-    secretSetting,
-    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-  ),
+  ...appSignInSettingsFields,
 };
 
 export const HostCredentialSettings = Schema.Struct(hostCredentialSettingsFields);
@@ -245,13 +255,22 @@ export interface SourceControlDefinition {
   /** Further words settings search finds this host by, besides its label. */
   readonly searchKeywords?: ReadonlyArray<string>;
   readonly credentials?: SourceControlHostCredentials;
+  /** Signing in through the forge's own app; its settings include `appSignInSettingsFields`. */
+  readonly appSignIn?: SourceControlAppSignIn;
   readonly changeRequest: ChangeRequestTerminology;
   readonly repositoryPathHint: string;
   readonly publicHost: string | null;
   readonly publishDescription: string;
   readonly publishHost: (signedInHost: string | null) => string;
   readonly newRepositoryOwner: (account: string | null) => { readonly owner: string | null } | null;
+  /** The host has no private repositories, so T3 creates public ones there. */
+  readonly publicRepositoriesOnly?: boolean;
   readonly defaultCloneTransport: "https" | "ssh";
+  /**
+   * Where the user adds an SSH key, for a host that takes pushes only over SSH. Advice for a
+   * refused push sends the user here instead of suggesting HTTPS.
+   */
+  readonly sshKeysUrl?: string;
   readonly changeRequestUrl: (input: ChangeRequestUrlInput) => string | null;
   readonly commitUrl?: (input: CommitUrlInput) => string | null;
   /** `known` is set when the caller already knows this host serves the URL's repository. */
@@ -333,9 +352,9 @@ export interface SourceControlDefinition {
   readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
   /**
    * For a host that spells one repository differently over SSH and on the web: the web spelling
-   * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
-   * the key is not this host's. Persisted repository keys are built with it, so its output must
-   * not change.
+   * of the key `normalizeGitRemoteUrl` made from a remote that names a host, which is `host/path`,
+   * or the lower-cased remote itself when its path is one segment. Null when the key is not this
+   * host's. Persisted repository keys are built with it, so its output must not change.
    */
   readonly repositoryKeyFromRemote?: (key: string) => string | null;
   /**
@@ -430,6 +449,12 @@ export function remoteWebOrigin(host: string, remoteUrl: string | undefined): st
   }
   return `https://${host}`;
 }
+
+/** What a repository T3 creates on the host is, unless the user picks otherwise. */
+export const newRepositoryVisibility = (
+  definition: Pick<SourceControlDefinition, "publicRepositoriesOnly">,
+): SourceControlRepositoryVisibility =>
+  definition.publicRepositoriesOnly === true ? "public" : "private";
 
 export function defineSourceControl<const Definition extends SourceControlDefinition>(
   definition: Definition,
@@ -755,7 +780,7 @@ export function makeSourceControlDefinitionRegistry(
     },
     repositoryKeyFromRemote: (remoteUrl) => {
       const key = normalizeGitRemoteUrl(remoteUrl);
-      if (parseGitRemoteRepository(remoteUrl) === null) return key;
+      if (parseGitRemoteHost(remoteUrl) === null) return key;
       for (const definition of definitions) {
         const spelled = definition.repositoryKeyFromRemote?.(key);
         if (spelled != null) return spelled;

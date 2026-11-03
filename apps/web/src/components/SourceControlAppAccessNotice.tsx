@@ -25,7 +25,9 @@ export function SourceControlAppAccessNotice(props: {
   readonly className?: string;
 }) {
   const definition = props.provider ? sourceControlClients.find(props.provider) : undefined;
-  const appSignIn = definition?.credentials?.appSignIn;
+  const appSignIn = definition?.appSignIn;
+  // Only an app that is installed per account can miss a repository.
+  const installUrl = appSignIn?.installUrl;
   const host = (props.host ?? definition?.publicHost ?? "").toLowerCase();
   const signedIn = useEnvironmentSettings(props.environmentId, (settings) =>
     definition === undefined
@@ -33,14 +35,23 @@ export function SourceControlAppAccessNotice(props: {
       : (readHostCredentialSettings(settings, definition.kind).signIns[host] ?? "").length > 0,
   );
   const access = useEnvironmentQuery(
-    definition !== undefined && appSignIn?.hosts.includes(host) && signedIn
+    definition !== undefined &&
+      installUrl !== undefined &&
+      appSignIn?.hosts.includes(host) &&
+      signedIn
       ? sourceControlEnvironment.appAccess({
           environmentId: props.environmentId,
           input: { provider: definition.kind, host, repository: props.repository },
         })
       : null,
   );
-  if (appSignIn === undefined || access.data?.status !== "not-covered") return null;
+  if (
+    appSignIn === undefined ||
+    installUrl === undefined ||
+    access.data?.status !== "not-covered"
+  ) {
+    return null;
+  }
   const owner = props.repository.split("/")[0] ?? props.repository;
 
   return (
@@ -58,7 +69,7 @@ export function SourceControlAppAccessNotice(props: {
       </p>
       <InlineButton
         className="shrink-0"
-        render={<a href={appSignIn.installUrl} target="_blank" rel="noreferrer noopener" />}
+        render={<a href={installUrl} target="_blank" rel="noreferrer noopener" />}
       >
         Install on {owner}
         <ExternalLinkIcon aria-hidden className="size-3" />

@@ -523,6 +523,10 @@
       "types": "./src/pullRequestChecks.ts",
       "default": "./src/pullRequestChecks.ts"
     },
+    "./pull-request-rounds": {
+      "types": "./src/pullRequestRounds.ts",
+      "default": "./src/pullRequestRounds.ts"
+    },
     "./pull-request-editing": {
       "types": "./src/pullRequestEditing.ts",
       "default": "./src/pullRequestEditing.ts"

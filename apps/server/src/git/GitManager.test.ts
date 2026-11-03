@@ -2196,6 +2196,44 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("keys a pull request by the repository its host names rather than by its URL", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@tangled.org:alice.tngl.sh/project",
+        originDir,
+      );
+      const repositoryKey = "tangled.org/did:plc:renamedrepoaaaaaaaaaaaaa";
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          kind: "tangled",
+          prListOtherwise: [
+            {
+              number: 3,
+              title: "Survives a rename",
+              url: "https://tangled.org/alice.tngl.sh/project/pulls/3",
+              baseRefName: "main",
+              headRefName: "feature",
+              repositoryKey,
+            },
+          ],
+        },
+      });
+      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" })).toMatchObject({
+        number: 3,
+        repositoryKey,
+      });
+    }),
+  );
+
   it.effect.each([
     { remoteUrl: "git@gitlab.com:Group/Subgroup/Fork.git", setUpstream: true },
     { remoteUrl: "git@gitlab.com:Group/Subgroup/Fork.git", setUpstream: false },
@@ -3468,6 +3506,58 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(result.push.status).toBe("pushed");
       expect(recorded).toEqual([{ branch: "feature/retried-push", baseBranch: "main" }]);
+    }),
+  );
+
+  it.effect("tells the host of each push, and keeps the push when the host refuses", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "HEAD:main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/rounds"]);
+      const commit = (file: string) =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(NodePath.join(repoDir, file), `${file}\n`);
+          yield* runGit(repoDir, ["add", file]);
+          yield* runGit(repoDir, ["commit", "-m", file]);
+          return (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        });
+
+      const told: Array<{ branch: string; headSha: string }> = [];
+      const { service } = createFakeSourceControlProvider();
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          branchPushed: ({ branch, headSha }) =>
+            Effect.sync(() => told.push({ branch, headSha })).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new SourceControlProviderFailure({
+                    provider: SourceControlProviderKind.make("tangled"),
+                    operation: "branchPushed",
+                    cwd: repoDir,
+                    detail: "The pull request was not resubmitted.",
+                  }),
+                ),
+              ),
+            ),
+        },
+      });
+      const first = yield* commit("one.txt");
+      const pushed = yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+      expect(pushed.push.status).toBe("pushed");
+      expect(pushed.toast.description).toBe("The pull request was not resubmitted.");
+
+      const second = yield* commit("two.txt");
+      yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+      const upToDate = yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+      expect(upToDate.push.status).toBe("skipped_up_to_date");
+      expect(told).toEqual([
+        { branch: "feature/rounds", headSha: first },
+        { branch: "feature/rounds", headSha: second },
+      ]);
     }),
   );
 

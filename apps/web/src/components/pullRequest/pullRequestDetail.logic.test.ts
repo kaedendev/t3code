@@ -16,6 +16,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { reviewCommentContextLabel } from "~/lib/composerContextRecords";
 
 import {
+  pullRequestActivityView,
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
@@ -131,6 +132,40 @@ const TIMELINE_SOURCE: Pick<
   mergedAt: null,
   closedAt: null,
 };
+
+describe("pull request activity view", () => {
+  const detail = { author: null, reviewers: [] };
+  const activity = {
+    comments: [],
+    commentCount: 0,
+    commentsTruncated: false,
+    reviewThreads: [],
+    commits: [],
+  };
+
+  it("carries the host's rounds and truncation flags into the detail view", () => {
+    const rounds = [
+      {
+        number: 1,
+        baseSha: "a".repeat(40),
+        headSha: "b".repeat(40),
+        createdAt: "2026-11-01T00:00:00.000Z",
+      },
+    ];
+    const view = pullRequestActivityView(detail, {
+      ...activity,
+      rounds,
+      reviewThreadsTruncated: true,
+    });
+    expect(view.rounds).toBe(rounds);
+    expect(view.reviewThreadsTruncated).toBe(true);
+  });
+
+  it("names no rounds for a host without them, nor before activity loads", () => {
+    expect("rounds" in pullRequestActivityView(detail, activity)).toBe(false);
+    expect("rounds" in pullRequestActivityView(detail, null)).toBe(false);
+  });
+});
 
 describe("pull request activity refresh", () => {
   const first = {

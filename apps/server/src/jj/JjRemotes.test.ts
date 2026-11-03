@@ -640,32 +640,60 @@ describeJj("JjRemotes.pushBookmark", () => {
     ),
   );
 
-  it.effect("refuses a push that would rewrite the published bookmark", () =>
+  it.effect.each([
+    { name: "pushes an amend of the published stack over its earlier versions", also: "none" },
+    { name: "refuses an amend that drops a published change from the stack", also: "drop" },
+    { name: "refuses an amend once someone else pushed on top", also: "peer-push" },
+  ] as const)("$name", ({ also }) =>
     withJjRepo({ prefix: "t3-jj-push-rewrite-", withRemote: true }, (repo) =>
       Effect.gen(function* () {
-        const { driver, fileSystem, path, process, remotePath, root } = repo;
-        yield* runJj(root, ["bookmark", "create", "feat", "-r", "main"]);
-        yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "published\n");
-        yield* runJj(root, ["commit", "-m", "published"]);
-        yield* runJj(root, ["bookmark", "set", "feat", "-r", "@-"]);
+        const { base, driver, fileSystem, path, process, remotePath, root } = repo;
+        const remoteFeat = () =>
+          runGit(remotePath, ["rev-parse", "refs/heads/feat"]).pipe(Effect.map((s) => s.trim()));
+        yield* fileSystem.writeFileString(path.join(root, "one.txt"), "one\n");
+        yield* runJj(root, ["commit", "-m", "one"]);
+        yield* fileSystem.writeFileString(path.join(root, "two.txt"), "two\n");
+        yield* runJj(root, ["commit", "-m", "two"]);
+        yield* runJj(root, ["bookmark", "create", "feat", "-r", "@-"]);
         yield* runJj(root, ["git", "push", "--bookmark", "feat", "--remote", "origin"]);
-        const published = (yield* runGit(remotePath, ["rev-parse", "refs/heads/feat"])).trim();
-        yield* runJj(root, ["edit", "feat"]);
-        yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "rewritten\n");
-        yield* runJj(root, ["commit", "-m", "rewritten"]);
+        yield* fileSystem.writeFileString(path.join(root, "one.txt"), "one, amended\n");
+        yield* runJj(root, ["squash", "--into", 'bookmarks(exact:"feat")-']);
+        if (also === "drop") {
+          yield* runJj(root, ["abandon", "--retain-bookmarks", 'bookmarks(exact:"feat")']);
+        }
+        if (also === "peer-push") {
+          const peer = path.join(base, "peer");
+          yield* runJj(base, ["git", "clone", "--colocate", remotePath, peer]);
+          yield* runJj(peer, ["bookmark", "track", 'exact:"feat"', '--remote=exact:"origin"']);
+          yield* runJj(peer, ["new", 'bookmarks(exact:"feat")']);
+          yield* fileSystem.writeFileString(path.join(peer, "three.txt"), "three\n");
+          yield* runJj(peer, ["commit", "-m", "peer"]);
+          yield* runJj(peer, ["bookmark", "set", "feat", "-r", "@-"]);
+          yield* runJj(peer, ["git", "push", "--bookmark", "feat", "--remote", "origin"]);
+        }
+        const before = yield* remoteFeat();
 
-        const failure = yield* makeJjRemotes({ driver, process })
-          .pushBookmark({ cwd: root, name: "feat", remoteName: "origin", operation: "test" })
-          .pipe(Effect.flip);
+        const push = makeJjRemotes({ driver, process }).pushBookmark({
+          cwd: root,
+          name: "feat",
+          remoteName: "origin",
+          operation: "test",
+        });
 
-        assert.equal(
-          failure._tag === "GitCommandError" ? failure.reason : null,
-          "push_rejected_non_fast_forward",
-        );
-        assert.equal(
-          (yield* runGit(remotePath, ["rev-parse", "refs/heads/feat"])).trim(),
-          published,
-        );
+        if (also === "none") {
+          assert.equal((yield* push).status, "pushed");
+          assert.equal(
+            yield* remoteFeat(),
+            (yield* driver.changeAt(root, 'bookmarks(exact:"feat")'))?.commitId,
+          );
+        } else {
+          const failure = yield* push.pipe(Effect.flip);
+          assert.equal(
+            failure._tag === "GitCommandError" ? failure.reason : null,
+            "push_rejected_non_fast_forward",
+          );
+          assert.equal(yield* remoteFeat(), before);
+        }
       }),
     ),
   );
@@ -850,7 +878,7 @@ describeJj("JjRemotes.pullCurrentBranch", () => {
         );
         assert.equal(
           failure.detail,
-          "feat was amended locally. Push feat to origin/feat in jj instead of pulling.",
+          "feat was amended locally. Push feat to origin/feat instead of pulling.",
         );
       }),
     ),

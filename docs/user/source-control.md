@@ -143,6 +143,33 @@ If cloning or pushing asks for a username, run `origin auth setup-git` to point 
 credentials again. Origin repositories use HTTPS and are published privately. Repositories mirrored
 from GitHub keep their pull requests on GitHub; open those from the GitHub remote.
 
+### Tangled
+
+Open **Settings â†’ Source control**, expand **Tangled**, and sign in with your atproto account.
+T3 Code reads public repositories without a sign-in, but opening, merging, closing and commenting on
+pull requests need one. Pushing goes over SSH, so add an SSH key to your Tangled account in
+[tangled.org settings](https://tangled.org/settings) on the machine running your T3 Code server.
+
+T3 Code knows a Tangled repository by its own identity rather than its name, so renaming the
+repository or changing your handle keeps its project, threads and pull requests together.
+
+Tangled keeps each submission of a pull request as a [round](#review-a-change-round-by-round), and
+pushing to its branch does not make a new one by itself. When T3 Code pushes a branch with your
+open pull request, it submits the new commits as the next round, so a stack of Jujutsu changes on
+one bookmark stays one pull request that grows round by round. If that fails, the push still
+stands and its notice says why. After pushing from elsewhere, choose **Resubmit** from the pull
+request's menu, or its status menu on mobile.
+
+Tangled merges by rebasing onto the target branch, so that is the only merge method offered. Tangled
+has no draft pull requests, requested reviewers, review approvals or line comments; comments on a
+pull request apply to the whole pull request. Checks come from the repository's spindle. A run for
+a pull request from someone outside the repository waits until a collaborator approves it on
+Tangled.
+
+Publishing a project to Tangled creates a public repository in your own account on the default
+knot, `knot1.tangled.sh`. Tangled has no private repositories. To use another knot, create the
+repository on tangled.org, then add it by its URL.
+
 ## Start, clone, or publish a project
 
 To start from nothing, choose **New project** in the command palette (`Cmd/Ctrl+K`), or
@@ -271,11 +298,21 @@ To shape guides to your taste, write **Review guide instructions** in Settings â
 such as what to show first or what to skip; projects can override them. They change emphasis and
 ordering, not the guide's layout or which files it covers.
 
+### Review a change round by round
+
+Some hosts keep every resubmission of a change request as a numbered round. On those, the **Code**
+tab on web and the changed files on mobile offer a round picker. It opens on the latest round. Pick
+an earlier round to read it as it was, or **Changes since round N** to read only what changed after
+the round you last reviewed, such as an agent's next iteration. Line comments are written on the
+latest round, as they are from **All commits**.
+
 ### Mark files as viewed
 
 Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a
 running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
 single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
+An earlier round on its own keeps no ticks, since a tick records the latest version of a file;
+**Changes since round N** keeps them.
 
 On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
 in either direction. Forgejo, GitLab, Bitbucket, Azure DevOps, and Cursor Origin expose no record
@@ -310,6 +347,8 @@ For a non-colocated jj repository, the unsupported reason explains the colocatio
 ### Commit, push and pull
 
 Committing runs `jj commit`, using your typed message first, then an existing change description, and generating one only when both are empty. A new bookmark uses the same selected text. T3 Code selects the workspace's bookmark, or the nearest bookmarked descendant or ancestor of `@` in an ordinary workspace. Editing in the middle of a feature stack pushes its feature bookmark without rewinding the descendant tip or moving `main`. If the agent already committed the work and `@` is empty, T3 Code can advance the bookmark without creating another empty commit.
+
+After you amend, squash, describe or rebase changes under a pushed bookmark, **Push rewrite** replaces their pushed versions. Push still refuses when the remote has anything else, such as someone else's commits, or moved since jj last fetched.
 
 Pull fetches the remote and refuses when the selected bookmark has unpublished commits. It rebases the existing working-copy change and its unbookmarked descendants onto that bookmark, keeping descriptions and edits, including dirty files. Automatic pull doesn't apply to Jujutsu repositories; use **Pull**.
 

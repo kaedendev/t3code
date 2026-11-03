@@ -272,6 +272,59 @@ export const resolveUpstreamContext = Effect.fn("JjStatus.resolveUpstreamContext
   return { primaryRemote, hasUpstream, defaultBookmark, bookmarks };
 });
 
+/**
+ * Whether every commit `remote` reaches and `local` does not is an earlier version, per jj's
+ * evolution log, of a change in `local`'s stack: the user's own amend, not someone else's work.
+ * Truncated evolog output can only drop versions, so it answers no rather than a wrong yes.
+ */
+export const isOwnRewrite = Effect.fn("JjStatus.isOwnRewrite")(function* (
+  process: VcsProcess.VcsProcess["Service"],
+  operation: string,
+  cwd: string,
+  revsets: { readonly local: string; readonly remote: string },
+): Effect.fn.Return<boolean, GitCommandError> {
+  const run = JjProcess.jjRunner(process);
+  const options = { ignoreWorkingCopy: true, timeoutMs: 20_000, outputMode: "truncate" } as const;
+  const [replaced, versions] = yield* Effect.all(
+    [
+      run(
+        operation,
+        cwd,
+        [
+          "log",
+          "--no-graph",
+          "-r",
+          `${revsets.local}..${revsets.remote}`,
+          "-T",
+          'commit_id ++ "\\n"',
+        ],
+        options,
+      ),
+      run(
+        operation,
+        cwd,
+        [
+          "evolog",
+          "--no-graph",
+          "-r",
+          `${revsets.remote}..${revsets.local}`,
+          "-T",
+          'self.commit().commit_id() ++ "\\n"',
+        ],
+        options,
+      ),
+    ],
+    { concurrency: 2 },
+  ).pipe(mapJjFailure(operation, cwd, "Could not read the bookmark rewrite history."));
+  const earlier = new Set(versions.stdout.split("\n"));
+  const remoteOnly = replaced.stdout.split("\n").filter((line) => line.length > 0);
+  return (
+    !replaced.stdoutTruncated &&
+    remoteOnly.length > 0 &&
+    remoteOnly.every((commitId) => earlier.has(commitId))
+  );
+});
+
 export interface JjAheadBehindCounts {
   readonly aheadCount: number;
   readonly behindCount: number;
@@ -785,6 +838,18 @@ export const makeJjStatus = Effect.fn("JjStatus.makeJjStatus")(function* (
             defaultBookmark: upstream.defaultBookmark,
             hasUpstream,
           });
+    // Earlier versions of the user's own changes are not work to pull; pushing replaces them.
+    // A remote that moved past jj's view (private counts) is never treated as one.
+    const rewritesUpstream =
+      !usePrivateCounts &&
+      primaryRemote !== null &&
+      upstreamRefName === refName &&
+      counts.aheadCount > 0 &&
+      counts.behindCount > 0 &&
+      (yield* isOwnRewrite(process, "JjStatus.remoteStatus", input.cwd, {
+        local: localBookmarkRevset(refName),
+        remote: remoteBookmarkRevset(primaryRemote, refName),
+      }));
 
     // The PR half of the product runs against the colocated git store: every local bookmark is
     // `refs/heads/<name>` there, so the existing lookup, its cache and its backoff all apply.
@@ -797,6 +862,7 @@ export const makeJjStatus = Effect.fn("JjStatus.makeJjStatus")(function* (
 
     return {
       ...counts,
+      ...(rewritesUpstream ? { behindCount: 0, rewritesUpstream } : {}),
       hasUpstream,
       pr:
         pullRequest === null

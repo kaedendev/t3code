@@ -19,6 +19,7 @@ import {
   useSharedPullRequestSummary,
 } from "~/state/pullRequests";
 import {
+  pullRequestActivityView,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
 } from "./pullRequestDetail.logic";
@@ -168,22 +169,7 @@ export function usePullRequestDetail(
                 updateMethods: [],
                 labels: false,
               },
-          author: activity?.author ?? coreDetail.author,
-          reviewers: activity?.reviewers ?? coreDetail.reviewers,
-          comments: activity?.comments ?? [],
-          commentCount: Math.max(
-            activity?.commentCount ?? 0,
-            new Set([
-              ...(activity?.comments.map((comment) => comment.id) ?? []),
-              ...(activity?.reviewThreads.flatMap((thread) =>
-                thread.comments.map((comment) => comment.id),
-              ) ?? []),
-            ]).size,
-          ),
-          commentsTruncated: activity?.commentsTruncated ?? false,
-          reviewThreads: activity?.reviewThreads ?? [],
-          commits: activity?.commits ?? [],
-          reactions: activity?.reactions ?? [],
+          ...pullRequestActivityView(coreDetail, activity),
         };
   return {
     canWriteSourceControl,

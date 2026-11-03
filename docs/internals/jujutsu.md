@@ -126,9 +126,18 @@ branches or names on one change are refused as ambiguous, never silently selecte
 to `main`. Editing `main <- x1(@) <- x2[feat]` therefore commits and pushes `feat`, never `main`;
 bookmark movement retains the descendant tip instead of rewinding it to `@-`. Push-only and
 create-change-request actions refuse if the selected bookmark includes the current `@` anywhere
-in its ancestry: commit the change first. Commit-and-push remains supported mid-stack. A push
-whose local bookmark does not descend from its remote bookmark is refused, as Git refuses a
-non-fast-forward push, because `jj git push` would otherwise rewrite published history.
+in its ancestry: commit the change first. Commit-and-push remains supported mid-stack.
+
+`jj git push` moves a remote bookmark sideways without complaint, so T3 refuses a push whose local
+bookmark does not descend from its remote bookmark, as Git refuses a non-fast-forward push. The
+exception is the user's own amend: every commit the remote bookmark reaches and the local one does
+not is an earlier version of a change in the local stack, by jj's evolution log
+([`isOwnRewrite`](../../apps/server/src/jj/JjStatus.ts)). Matching change ids alone would also accept
+a peer's amend of the same change. Status reports that state as `rewritesUpstream` with no behind
+count, so clients offer Push, and the push goes through. Safety against a remote that moved since
+the last jj fetch or push is jj's own: it refuses refs that "unexpectedly moved on the remote", and
+T3 maps that to the same non-fast-forward refusal. The background fetch never updates jj's remote
+bookmarks, so it cannot weaken that check, and a remote it saw move is never reported as a rewrite.
 
 Commit uses the typed message when nonblank, then the existing change description, then generated
 text. The selected text retains its exact trimmed formatting; a new bookmark derives its name from

@@ -7,7 +7,7 @@ import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSettingsForm";
 
 export function SourceControlHostSettings({
   environmentId,
@@ -20,7 +20,7 @@ export function SourceControlHostSettings({
   };
   readonly onSaved: () => void;
 }) {
-  const saved = useEnvironmentSettings(
+  const stored = useEnvironmentSettings(
     environmentId,
     (settings) => settings.sourceControlHosts[definition.kind],
   );
@@ -29,6 +29,14 @@ export function SourceControlHostSettings({
   });
   const [saving, setSaving] = useState(false);
   const formDefinition = { settingsSchema: definition.settings };
+  // Hidden fields, such as an app sign-in's session, belong to other controls; never clear them here.
+  const visibleKeys = new Set(
+    deriveProviderSettingsFields(formDefinition, stored).map((field) => field.key),
+  );
+  const saved =
+    stored === undefined
+      ? undefined
+      : Object.fromEntries(Object.entries(stored).filter(([key]) => visibleKeys.has(key)));
   const hasSaved = Object.values(saved ?? {}).some((value) => value !== "");
 
   const save = async (fields: Record<string, unknown>) => {
@@ -41,6 +49,7 @@ export function SourceControlHostSettings({
     if (result._tag === "Success") onSaved();
   };
 
+  if (visibleKeys.size === 0) return null;
   return (
     // Locked while saving, so an edit made mid-request is not overwritten by the saved value.
     <fieldset disabled={saving} className="contents">
@@ -51,7 +60,9 @@ export function SourceControlHostSettings({
         variant="settings"
         environmentId={environmentId}
         onChange={(next) => {
-          const fields = next ?? {};
+          const fields = Object.fromEntries(
+            Object.entries(next ?? {}).filter(([key]) => visibleKeys.has(key)),
+          );
           const changed = Object.fromEntries(
             Object.entries(fields).filter(([key, value]) => !Equal.equals(saved?.[key], value)),
           );
