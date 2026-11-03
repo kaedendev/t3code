@@ -199,6 +199,8 @@ const DiffSide = Schema.Struct({
   size: Schema.Number,
   isBinary: Schema.Boolean,
   isSubmodule: Schema.optional(Schema.Boolean),
+  /** An interdiff's left side is a tree rebased for that one answer, so its text comes inline. */
+  content: Schema.optional(Schema.String),
 });
 const FileDiff = Schema.Struct({
   lhsSrc: DiffSide,
@@ -398,12 +400,13 @@ export class TangledApi extends Context.Service<
       readonly headRepoDid: string;
       readonly headCommit: string;
     }) => Effect.Effect<ReadonlyArray<TangledFileDiff>, TangledApiError>;
-    /** What changed between two rounds, as Tangled's own interdiff computes it. */
+    /**
+     * What changed from one round to a later one: `from` rebased onto `to`'s base, against `to`'s
+     * head, so commits the target gained in between do not show.
+     */
     readonly getInterdiff: (input: {
-      readonly baseRepoDid: string;
-      readonly headRepoDid: string;
-      readonly from: Pick<TangledRound, "baseOid" | "headOid">;
-      readonly to: Pick<TangledRound, "baseOid" | "headOid">;
+      readonly from: Pick<TangledRound, "baseOid" | "headOid" | "sourceRepoDid">;
+      readonly to: Pick<TangledRound, "baseOid" | "headOid" | "sourceRepoDid">;
     }) => Effect.Effect<ReadonlyArray<TangledFileDiff>, TangledApiError>;
     readonly mergeCheck: (input: {
       readonly targetRepoDid: string;
@@ -814,12 +817,13 @@ export const make = Effect.gen(function* () {
     getInterdiff: Effect.fn("TangledApi.getInterdiff")((input) =>
       read(
         NSID.getInterdiff,
+        // Named for the two rounds, not two sides: `base*` is the earlier round's range.
         {
-          baseRepo: input.baseRepoDid,
+          baseRepo: input.from.sourceRepoDid,
           baseCommit1: input.from.baseOid,
-          baseCommit2: input.to.baseOid,
-          headRepo: input.headRepoDid,
-          headCommit1: input.from.headOid,
+          baseCommit2: input.from.headOid,
+          headRepo: input.to.sourceRepoDid,
+          headCommit1: input.to.baseOid,
           headCommit2: input.to.headOid,
         },
         Diffs,

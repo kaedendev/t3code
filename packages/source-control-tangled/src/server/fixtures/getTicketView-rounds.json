@@ -1,0 +1,16 @@
+{
+  "uri": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.track.ticket/4618",
+  "cid": "bafyreietcughloz4hb24yootpqemsjaruxub6qip3vc5xlekdhohyy2hqe",
+  "author": {
+    "avatarCid": "bafkreih345bhwbpq7hbmfok2fyw37lkf6us6dsldvdddbb2vaazirpcod4",
+    "did": "did:plc:bvraa6gajy4tfr3eh2sisdkr",
+    "handle": "jola.dev"
+  },
+  "title": {
+    "text": "knot2: fix container build, pin multi-arch distroless digest",
+    "$type": "org.tangled.markup.markdown#inline"
+  },
+  "state": "completed",
+  "targetBranch": "master",
+  "createdAt": "2026-10-30T14:12:09Z"
+}

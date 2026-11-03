@@ -5,6 +5,7 @@ import {
   type PullRequestCheck,
   type PullRequestChecksState,
   type PullRequestCheckStatus,
+  type PullRequestRoundSelection,
   type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 import { dedupeChecks, sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
@@ -41,6 +42,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
   reviewers: { request: false, listCandidates: false },
   edit: { changeRequest: true, comment: false },
+  rounds: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {
@@ -288,6 +290,39 @@ export const make = Effect.gen(function* () {
       headRepoDid: round.sourceRepoDid,
       head: commit,
     };
+  });
+
+  /**
+   * What a diff read shows: the latest round, one commit of it, one earlier round, or what changed
+   * since an earlier round. Rounds are read through Tangled, which keeps heads a force-push dropped.
+   */
+  const comparisonFor = Effect.fn("TangledPullRequestProvider.comparisonFor")(function* (
+    operation: string,
+    input: PullRef & {
+      readonly commit?: string | undefined;
+      readonly round?: PullRequestRoundSelection | undefined;
+    },
+  ) {
+    const { repository, rounds, round } = yield* loadPull(operation, input);
+    const range = (range: TangledPatch.TangledRange): TangledPatch.TangledComparison => ({
+      kind: "range",
+      range,
+    });
+    if (input.commit !== undefined)
+      return range(yield* commitRange(operation, round, input.commit));
+    if (input.round === undefined) return range(rangeOf(repository, round));
+    const roundAt = (number: number) =>
+      Effect.fromNullishOr(rounds[number - 1]).pipe(
+        Effect.mapError(() =>
+          failure(operation, `Pull request #${input.number} has no round ${number}.`, "not-found"),
+        ),
+      );
+    const to = yield* roundAt(input.round.number);
+    if (input.round.since === undefined) return range(rangeOf(repository, to));
+    // Tangled's interdiff, not head..head: a round rebased onto a newer target would otherwise
+    // show every commit the target gained in between.
+    const from = yield* roundAt(input.round.since);
+    return { kind: "interdiff", from, to } satisfies TangledPatch.TangledComparison;
   });
 
   /** Reads the knot's copy and writes it back over exactly that version. */
@@ -613,6 +648,16 @@ export const make = Effect.gen(function* () {
       },
     ),
 
+    listRounds: Effect.fn("TangledPullRequestProvider.listRounds")(function* (input) {
+      const { rounds } = yield* loadPull("listRounds", input);
+      return rounds.map((round) => ({
+        number: round.round,
+        headSha: round.headOid,
+        baseSha: round.baseOid,
+        createdAt: iso(round.createdAt),
+      }));
+    }),
+
     getViewerPermissions: Effect.fn("TangledPullRequestProvider.getViewerPermissions")(
       function* (input) {
         const operation = "getViewerPermissions";
@@ -626,31 +671,18 @@ export const make = Effect.gen(function* () {
 
     getDiff: Effect.fn("TangledPullRequestProvider.getDiff")(function* (input) {
       const operation = "getDiff";
-      const { repository, round } = yield* loadPull(operation, input);
-      const range =
-        input.commit === undefined
-          ? rangeOf(repository, round)
-          : yield* commitRange(operation, round, input.commit);
-      return yield* TangledPatch.readPatchSlice(api, range, input.cursor).pipe(
+      const comparison = yield* comparisonFor(operation, input);
+      return yield* TangledPatch.readPatchSlice(api, comparison, input.cursor).pipe(
         Effect.mapError(fail(operation)),
       );
     }),
 
     getDiffFilePaths: Effect.fn("TangledPullRequestProvider.getDiffFilePaths")(function* (input) {
       const operation = "getDiffFilePaths";
-      const { repository, round } = yield* loadPull(operation, input);
-      const range =
-        input.commit === undefined
-          ? rangeOf(repository, round)
-          : yield* commitRange(operation, round, input.commit);
-      const files = yield* api
-        .getDiff({
-          baseRepoDid: range.baseRepoDid,
-          baseCommit: range.base,
-          headRepoDid: range.headRepoDid,
-          headCommit: range.head,
-        })
-        .pipe(Effect.mapError(fail(operation)));
+      const comparison = yield* comparisonFor(operation, input);
+      const files = yield* TangledPatch.listFiles(api, comparison).pipe(
+        Effect.mapError(fail(operation)),
+      );
       return {
         files: files.map((file) => ({ oldPath: file.lhsSrc.path, newPath: file.rhsSrc.path })),
         nextCursor: null,
@@ -660,12 +692,8 @@ export const make = Effect.gen(function* () {
     getDiffFileContents: Effect.fn("TangledPullRequestProvider.getDiffFileContents")(
       function* (input) {
         const operation = "getDiffFileContents";
-        const { repository, round } = yield* loadPull(operation, input);
-        const range =
-          input.commit === undefined
-            ? rangeOf(repository, round)
-            : yield* commitRange(operation, round, input.commit);
-        const contents = yield* TangledPatch.readFileContents(api, range, {
+        const comparison = yield* comparisonFor(operation, input);
+        const contents = yield* TangledPatch.readFileContents(api, comparison, {
           oldPath: input.oldPath,
           newPath: input.newPath,
           change:
