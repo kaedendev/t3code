@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import { fakeTangled, type FakeRoute, type RecordedRequest } from "./fakeTangled.ts";
 import containerfile from "./fixtures/getBlob-Containerfile.json" with { type: "json" };
@@ -403,6 +405,101 @@ describe("TangledPullRequestProvider rounds", () => {
         .getDiff({ ...pull, round: { number: 4, since: 1 } })
         .pipe(Effect.flip);
       assert.strictEqual(error.reason, "not-found");
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
+describe("TangledPullRequestProvider listing", () => {
+  const OTHER = "did:plc:otherrepoaaaaaaaaaaaaaaaa";
+  const ticket = (repoDid: string, rkey: string) => ({
+    uri: `at://${repoDid}/org.tangled.track.ticket/${rkey}`,
+    cid: `bafy${rkey}`,
+    author: OWNER,
+    state: "open",
+    value: {
+      title: { text: `Pull ${rkey}` },
+      state: "open",
+      targetBranch: "main",
+      createdAt: "2026-11-01T10:00:00Z",
+    },
+  });
+  /** `alice.tngl.sh/project` has #7 and #8 open, and `alice.tngl.sh/other` has #1. */
+  const listing = () =>
+    routes({
+      "org.tangled.repo.getRepoByName": (request: RecordedRequest) => ({
+        body: {
+          uri: `at://${request.params.get("name") === "other" ? OTHER : REPO}/org.tangled.repo.manifest/self`,
+          knot: "knot1.tangled.sh",
+          value: { declaration: { name: request.params.get("name"), owner: OWNER } },
+        },
+      }),
+      "org.tangled.repo.listPulls": (request: RecordedRequest) => ({
+        body: {
+          items:
+            request.params.get("subject") === OTHER
+              ? [ticket(OTHER, "1")]
+              : [ticket(REPO, "7"), ticket(REPO, "8")],
+        },
+      }),
+    });
+  const project = { cwd: "/repo", host: "tangled.org", repository: "alice.tngl.sh/project" };
+  const other = { ...project, repository: "alice.tngl.sh/other" };
+
+  it.effect("a refresh re-reads the rounds of only the pull requests it names", () => {
+    const fake = fakeTangled(listing());
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      const forget = provider.forgetChangeRequestReads!;
+      let seen = 0;
+      const list = (ref: typeof project) =>
+        provider.listChangeRequests({
+          ...ref,
+          state: "open",
+          involvement: "all",
+          viewer: "alice.tngl.sh",
+          limit: 20,
+        });
+      /** The tickets whose rounds Tangled was asked for since the last look. */
+      const roundsRead = () => {
+        const calls = fake.calls("org.tangled.temp.review.listPatches");
+        const read = calls
+          .slice(seen)
+          .map((request) => request.params.get("ticket")?.split("/").pop());
+        seen = calls.length;
+        return read.toSorted();
+      };
+
+      yield* list(project);
+      yield* list(other);
+      assert.deepStrictEqual(roundsRead(), ["1", "7", "8"]);
+
+      yield* forget({ repository: other.repository, number: 1 });
+      yield* list(project);
+      yield* list(other);
+      assert.deepStrictEqual(roundsRead(), ["1"]);
+
+      yield* forget({ repository: project.repository, number: 7 });
+      yield* list(project);
+      assert.deepStrictEqual(roundsRead(), ["7"]);
+
+      yield* forget({ repository: project.repository });
+      yield* list(project);
+      yield* list(other);
+      assert.deepStrictEqual(roundsRead(), ["7", "8"]);
+
+      yield* forget();
+      yield* list(project);
+      yield* list(other);
+      assert.deepStrictEqual(roundsRead(), ["1", "7", "8"]);
+
+      // Rounds read just before the repository's entry lapses outlive it.
+      yield* TestClock.adjust(Duration.seconds(570));
+      yield* list(project);
+      assert.deepStrictEqual(roundsRead(), ["7", "8"]);
+      yield* TestClock.adjust(Duration.seconds(40));
+      yield* forget({ repository: project.repository, number: 7 });
+      yield* list(project);
+      assert.deepStrictEqual(roundsRead(), ["7", "8"]);
     }).pipe(Effect.provide(fake.layer));
   });
 });

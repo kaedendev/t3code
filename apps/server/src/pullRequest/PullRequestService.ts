@@ -1072,16 +1072,17 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const refOn = <I extends PullRequestRef>(input: I, project: SupportedProject) => ({
+    ...input,
+    projectId: project.project.id,
+    host: project.host,
+    repository: project.repository,
+  });
+
   const canonicalRef = Effect.fn("PullRequestService.canonicalRef")(function* <
     I extends PullRequestRef,
   >(input: I) {
-    const project = yield* requireProject(input);
-    return {
-      ...input,
-      projectId: project.project.id,
-      host: project.host,
-      repository: project.repository,
-    };
+    return refOn(input, yield* requireProject(input));
   });
 
   // Access can change after page load; recheck every write.
@@ -3516,10 +3517,10 @@ export const make = Effect.gen(function* () {
     return { stats: [...held, ...result.stats] };
   });
 
-  const forgetProviderReads = (scope?: { readonly repository: string; readonly number?: number }) =>
+  const forgetProviderReads = () =>
     Effect.forEach(
       registry.kinds,
-      (kind) => registry.get(kind)?.forgetChangeRequestReads?.(scope) ?? Effect.void,
+      (kind) => registry.get(kind)?.forgetChangeRequestReads?.() ?? Effect.void,
       { discard: true },
     );
 
@@ -3536,13 +3537,19 @@ export const make = Effect.gen(function* () {
           );
     }
     if (reference !== undefined) {
-      yield* canonicalRef(reference).pipe(
-        Effect.flatMap((ref) =>
-          forgetProviderReads({ repository: ref.repository, number: ref.number }).pipe(
+      yield* requireProject(reference).pipe(
+        Effect.flatMap((project) => {
+          const ref = refOn(reference, project);
+          // Only the provider serving the reference reads it, and another may hold the same name.
+          const forget = project.api.forgetChangeRequestReads?.({
+            repository: ref.repository,
+            number: ref.number,
+          });
+          return (forget ?? Effect.void).pipe(
             Effect.andThen(readCache.invalidate(refScope(ref))),
             Effect.andThen(Effect.sync(() => bumpRefEpoch(ref))),
-          ),
-        ),
+          );
+        }),
         Effect.ignore,
       );
     } else {

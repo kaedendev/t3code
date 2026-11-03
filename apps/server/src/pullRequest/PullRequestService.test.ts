@@ -2267,8 +2267,9 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
 
 it.effect("a refresh or a finished turn drops the provider's own change request reads", () =>
   Effect.gen(function* () {
-    const forgotten: Array<{ readonly repository: string; readonly number?: number } | undefined> =
-      [];
+    type Scope = { readonly repository: string; readonly number?: number } | undefined;
+    const forgotten: Array<Scope> = [];
+    const forgottenElsewhere: Array<Scope> = [];
     const service = yield* makeService({
       projects: [
         project({
@@ -2283,6 +2284,10 @@ it.effect("a refresh or a finished turn drops the provider's own change request 
         fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
           forgetChangeRequestReads: (scope) => Effect.sync(() => void forgotten.push(scope)),
         }),
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          forgetChangeRequestReads: (scope) =>
+            Effect.sync(() => void forgottenElsewhere.push(scope)),
+        }),
       ],
     });
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
@@ -2296,6 +2301,8 @@ it.effect("a refresh or a finished turn drops the provider's own change request 
       undefined,
       undefined,
     ]);
+    // Another host's provider holds none of the reference's reads; only a full refresh reaches it.
+    assert.deepStrictEqual(forgottenElsewhere, [undefined, undefined]);
   }),
 );
 

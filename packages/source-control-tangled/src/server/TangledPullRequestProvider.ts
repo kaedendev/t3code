@@ -624,8 +624,19 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    forgetChangeRequestReads: Effect.fn("TangledPullRequestProvider.forgetChangeRequestReads")(() =>
-      api.forgetRounds(),
+    forgetChangeRequestReads: Effect.fn("TangledPullRequestProvider.forgetChangeRequestReads")(
+      function* (scope) {
+        const reference = scope === undefined ? null : parseTangledRepository(scope.repository);
+        const repository =
+          reference === null ? null : Option.getOrNull(yield* api.cachedRepository(reference));
+        // Unheld, the repository's rounds may still be: its entry can expire before theirs.
+        if (scope === undefined || repository === null) return yield* api.forgetRounds();
+        yield* api.forgetRounds(
+          scope.number === undefined
+            ? `at://${repository.repoDid}`
+            : TangledApi.ticketUri(repository.repoDid, String(scope.number)),
+        );
+      },
     ),
 
     getChangeRequestActivity: Effect.fn("TangledPullRequestProvider.getChangeRequestActivity")(
