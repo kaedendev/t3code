@@ -64,6 +64,7 @@ export const makeDiscovery = Effect.gen(function* () {
     kind: KIND,
     label: "Tangled",
     installHint: SIGN_IN_HINT,
+    appSignIn: true,
     probeAuth: auth.viewer.pipe(
       Effect.map(
         Option.match({

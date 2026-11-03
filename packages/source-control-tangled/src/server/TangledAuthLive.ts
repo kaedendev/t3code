@@ -38,7 +38,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { TangledAuth, TangledAuthError, type TangledViewer } from "./TangledAuth.ts";
 
 /** The relay in `infra/tangled-oauth`: client metadata, assertion signing and the callback. */
-export const RELAY_ORIGIN = "https://t3-oauth.kaeden.codes";
+const RELAY_ORIGIN = "https://t3-oauth.kaeden.codes";
 
 const KIND = SourceControlProviderKind.make("tangled");
 const HOST = "tangled.org";

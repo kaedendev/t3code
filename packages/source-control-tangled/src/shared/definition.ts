@@ -3,7 +3,7 @@ import {
   buildCommitUrl,
   changeRequestUrlBelow,
   defineSourceControl,
-  hostCredentialSettingsFields,
+  appSignInSettingsFields,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   type CommitLink,
@@ -158,7 +158,7 @@ function parseCommitUrl(url: URL): CommitLink | null {
     : null;
 }
 
-export const settings = makeProviderSettingsSchema(hostCredentialSettingsFields);
+export const settings = makeProviderSettingsSchema(appSignInSettingsFields);
 export type TangledSettings = typeof settings.Type;
 
 export const definition = defineSourceControl({
@@ -167,20 +167,12 @@ export const definition = defineSourceControl({
   pickerLabel: "Tangled",
   icon,
   searchKeywords: ["atproto", "knot", "tangled.sh"],
-  credentials: {
-    cliName: "tg",
-    cliLabel: "Tangled CLI",
-    loginCommand: "tg auth login",
-    tokenEnvVar: "TANGLED_TOKEN",
-    tokenAccess: "write access to the repositories you work in",
-    newTokenUrl: () => "https://tangled.org/settings",
-    appSignIn: {
-      appName: "T3 Code",
-      hosts: [TANGLED_WEB_HOST],
-      // The grant lives on the account's own PDS, whose settings page T3 cannot know.
-      installUrl: "https://tangled.org/settings",
-      revokeUrl: "https://tangled.org/settings",
-    },
+  appSignIn: {
+    appName: "T3 Code",
+    hosts: [TANGLED_WEB_HOST],
+    summary:
+      "Lets the server open pull requests, submit rounds, merge and comment as you. Reading needs no sign-in.",
+    account: { label: "Your handle", placeholder: "alice.bsky.social" },
   },
   changeRequest: {
     shortLabel: "PR",
