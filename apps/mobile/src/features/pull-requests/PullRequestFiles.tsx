@@ -29,8 +29,8 @@ import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import { PR_ROW_ENTER, PR_ROW_EXIT, PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { PullRequestDiffStats, PullRequestReadStatus } from "./PullRequestPresentation";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
+import { pullRequestDiffScope } from "./pullRequestDiffScope";
 import {
-  pullRequestDiffScope,
   pullRequestTarget,
   usePullRequestDiff,
   type PullRequestDiffParams,

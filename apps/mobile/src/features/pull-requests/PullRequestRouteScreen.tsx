@@ -99,8 +99,8 @@ import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCo
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import { pullRequestTimelineRows } from "./PullRequestTimeline";
 import { PullRequestActionToolbar, PullRequestCardGroup } from "./PullRequestControls";
+import { pullRequestDiffScope } from "./pullRequestDiffScope";
 import {
-  pullRequestDiffScope,
   pullRequestTarget as requestTarget,
   usePullRequestDiff,
   usePullRequestDiffEntry,

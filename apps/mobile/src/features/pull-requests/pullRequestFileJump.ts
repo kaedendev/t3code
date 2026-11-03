@@ -1,4 +1,5 @@
-import { pullRequestDiffScope, type PullRequestDiffParams } from "./usePullRequestDiff";
+import { pullRequestDiffScope } from "./pullRequestDiffScope";
+import type { PullRequestDiffParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 
 // The changed-files sheet hands its pick to the diff screen beneath it. Picking the file the
