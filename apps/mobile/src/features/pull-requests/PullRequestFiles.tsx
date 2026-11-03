@@ -1,5 +1,10 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  pullRequestRoundEndsAtHead,
+  pullRequestRoundOptions,
+  selectPullRequestRoundOption,
+} from "@t3tools/client-runtime/pull-request-rounds";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
@@ -20,10 +25,12 @@ import { Toolbar } from "../../components/ui/Toolbar";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import type { ReviewParsedDiff, ReviewRenderableFile } from "../review/reviewModel";
+import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import { PR_ROW_ENTER, PR_ROW_EXIT, PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { PullRequestDiffStats, PullRequestReadStatus } from "./PullRequestPresentation";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import {
+  pullRequestDiffScope,
   pullRequestTarget,
   usePullRequestDiff,
   type PullRequestDiffParams,
@@ -48,13 +55,18 @@ function fileDirectory(path: string) {
 
 function useChangedFiles(params: PullRequestDiffParams) {
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
-  // A commit's diff is part of the pull request, so the PR's file counts and viewed state don't apply.
-  const pr = params.commit ? null : detail.data;
+  const activity = useEnvironmentQuery(
+    params.round ? composerPullRequests.activity(pullRequestTarget(params)) : null,
+  );
+  // A commit's or round's diff is part of the pull request, so the PR's file counts don't apply.
+  const pr = params.commit || params.round ? null : detail.data;
+  // A tick stamps the head's version of a file, so ticks apply only where the diff ends there.
+  const ticks = !params.commit && pullRequestRoundEndsAtHead(activity.data?.rounds, params.round);
   const terminology = sourceControlClients.get(
     (detail.data ?? params.initialSummary)?.provider,
   ).changeRequest;
   const diff = usePullRequestDiff(params, terminology);
-  const viewed = usePullRequestFilesViewed(params, pr);
+  const viewed = usePullRequestFilesViewed(params, ticks ? detail.data : null);
   const filter = usePullRequestFileFilter(diff.parsed);
   const parsed = filter.parsed;
   return {
@@ -253,7 +265,17 @@ function ChangeBreakdownLine(props: {
  */
 export function usePullRequestFilesSection(params: PullRequestParams) {
   const navigation = useNavigation();
-  const files = useChangedFiles(params);
+  const target = pullRequestTarget(params);
+  const keepsRounds = useEnvironmentQuery(composerPullRequests.detail(target)).data?.capabilities
+    .rounds;
+  const activity = useEnvironmentQuery(keepsRounds ? composerPullRequests.activity(target) : null);
+  const [roundKey, setRoundKey] = useState<string | null>(null);
+  const roundOptions = pullRequestRoundOptions(activity.data?.rounds);
+  const roundOption = selectPullRequestRoundOption(roundOptions, roundKey);
+  const diffParams: PullRequestDiffParams = roundOption?.selection
+    ? { ...params, round: roundOption.selection }
+    : params;
+  const files = useChangedFiles(diffParams);
   const { diff, filter, viewed, pr, parsed, loading } = files;
   const breakdown = useEnvironmentQuery(
     composerPullRequests.changeBreakdown(pullRequestTarget(params)),
@@ -264,6 +286,21 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
     header: (
       <>
         <PullRequestReadStatus pending={false} error={diff.error} terminology={files.terminology} />
+        {roundOption ? (
+          <View className="flex-row pt-3">
+            <ListFilterMenu
+              label={roundOption.label}
+              accessibilityLabel="Choose review round"
+              active={roundOption.selection !== null}
+              actions={roundOptions.map((option) => ({
+                id: option.key,
+                title: option.label,
+                state: option.key === roundOption.key ? "on" : "off",
+              }))}
+              onSelect={setRoundKey}
+            />
+          </View>
+        ) : null}
         {loading ? (
           <View
             accessibilityLabel="Loading changed files"
@@ -302,7 +339,7 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
               <Text textRole="caption" className="text-foreground-muted">
                 {describeFiles(parsed, files)}
               </Text>
-              {breakdown ? <ChangeBreakdownLine breakdown={breakdown} /> : null}
+              {breakdown && pr ? <ChangeBreakdownLine breakdown={breakdown} /> : null}
             </View>
             <PullRequestDiffStats
               additions={parsed.additions}
@@ -327,7 +364,9 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
               file={file}
               directory={fileDirectory(file.path)}
               viewed={viewed.isViewed(file.path)}
-              onPress={() => navigation.navigate("PullRequestFile", { ...params, path: file.path })}
+              onPress={() =>
+                navigation.navigate("PullRequestFile", { ...diffParams, path: file.path })
+              }
             />
           ),
         })),
@@ -415,7 +454,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
         title="Changed files"
-        subtitle={`#${params.number} · ${params.commit?.slice(0, 7) ?? params.repository}`}
+        subtitle={`#${params.number} · ${params.commit?.slice(0, 7) ?? (params.round ? pullRequestDiffScope(params).title : params.repository)}`}
         onClose={() => navigation.goBack()}
         // iOS gets the native menu below; SheetHeader would render this as a custom bar item.
         trailing={Platform.OS === "android" ? <FileFilterMenu filter={filter} /> : undefined}

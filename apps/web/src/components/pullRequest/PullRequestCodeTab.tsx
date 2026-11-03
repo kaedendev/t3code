@@ -3,6 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
+  pullRequestRoundEndsAtHead,
   pullRequestRoundOptions,
   selectPullRequestRoundOption,
 } from "@t3tools/client-runtime/pull-request-rounds";
@@ -471,7 +472,8 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
-  const filesViewedEnabled = filesViewed.enabled && roundOption?.endsAtHead !== false;
+  const filesViewedEnabled =
+    filesViewed.enabled && pullRequestRoundEndsAtHead(detail.rounds, round);
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {

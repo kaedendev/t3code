@@ -1,4 +1,4 @@
-import type { PullRequestDiffParams } from "./usePullRequestDiff";
+import { pullRequestDiffScope, type PullRequestDiffParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 
 // The changed-files sheet hands its pick to the diff screen beneath it. Picking the file the
@@ -8,7 +8,7 @@ type Listener = (path: string) => void;
 const listeners = new Map<string, Set<Listener>>();
 
 export function pullRequestFileJumpScope(params: PullRequestDiffParams): string {
-  return JSON.stringify([pullRequestReviewKey(params), params.commit ?? null]);
+  return JSON.stringify([pullRequestReviewKey(params), pullRequestDiffScope(params).key]);
 }
 
 export function requestPullRequestFileJump(scope: string, path: string): void {
