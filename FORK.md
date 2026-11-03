@@ -27,6 +27,10 @@ The stack has three parts:
 
 The App Store app works against a fork server. It shows Git wording for jj repos, and it has no Tangled sign-in, round picker or Resubmit action; sign in to Tangled from web or desktop, and the server keeps the session for every client.
 
+## T3 Connect
+
+Fork builds use upstream's production relay (`relay.t3.codes`) and Clerk app, so a fork machine links to the same T3 Connect account as upstream machines. `fork-release.yml` holds the four public values upstream bakes into its builds. Upstream can rotate them; if linking breaks after an upstream release, read them from that release's `t3` binary (`buildTimeRelayUrl`, `buildTimeClerkPublishableKey`, `buildTimeClerkCliOAuthClientId`, and the `clerkJwtTemplate` in its client bundle). Builds made before this change have Connect turned off and need a reinstall. Relay tracing stays off in fork builds.
+
 ## Known limits of jj support
 
 - A stale workspace is reported, not repaired. If you rewrite a thread's change from another workspace, T3 shows "workspace is stale". Run `jj workspace update-stale` in that workspace yourself.

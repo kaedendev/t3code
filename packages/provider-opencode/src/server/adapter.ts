@@ -3270,6 +3270,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
+                  cwd: turnInput.runtimePolicy.cwd,
                 }),
               ]
                 .filter(Boolean)
