@@ -1,0 +1,35 @@
+{
+  "pipelines": [
+    {
+      "commit": "8548a4aab2507879e7ef0f04c5a27775c18d942f",
+      "createdAt": "2026-11-03T01:53:58+02:00",
+      "id": "3mzejhzchn722",
+      "repo": "did:plc:j5hmlfdrwkvtxm7cjmu7j2is",
+      "trigger": {
+        "$type": "org.tangled.event.pullRequest",
+        "action": "opened",
+        "pull": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.track.ticket/4669",
+        "sourceBranch": "op/mppvswrwourq",
+        "sourceSha": "8548a4aab2507879e7ef0f04c5a27775c18d942f",
+        "targetBranch": "master"
+      },
+      "workflows": [
+        {
+          "finishedAt": "2026-11-03T01:54:11.422802791+02:00",
+          "id": "commit-lint.yml",
+          "name": "commit-lint.yml",
+          "startedAt": "2026-11-03T01:53:58.104697052+02:00",
+          "status": "success"
+        },
+        {
+          "finishedAt": "2026-11-03T01:54:19.069108763+02:00",
+          "id": "fmt.yml",
+          "name": "fmt.yml",
+          "startedAt": "2026-11-03T01:53:58.109168366+02:00",
+          "status": "success"
+        }
+      ]
+    }
+  ],
+  "total": 1
+}

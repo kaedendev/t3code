@@ -1,0 +1,79 @@
+{
+  "diffs": [
+    {
+      "hasByteChanges": { "lhs": 9949, "rhs": 10299 },
+      "hasSyntacticChanges": false,
+      "hunks": [{ "lines": [{ "rhs": 4 }], "novelLhs": [], "novelRhs": [4] }],
+      "lhsSrc": {
+        "isBinary": false,
+        "isSubmodule": false,
+        "oid": "881e05a50bf534e4945a8f8cbb7f18e077df56a2",
+        "path": "sitesd/sitefeed/feed.go",
+        "size": 9949
+      },
+      "rhsSrc": {
+        "isBinary": false,
+        "isSubmodule": false,
+        "oid": "ab17090bdbad1c053c43a4a693a96868ac36c12f",
+        "path": "sitesd/sitefeed/feed.go",
+        "size": 10299
+      }
+    },
+    {
+      "hasByteChanges": { "lhs": 16727, "rhs": 19024 },
+      "hasSyntacticChanges": false,
+      "hunks": [
+        {
+          "lines": [
+            { "rhs": 347 },
+            { "rhs": 348 },
+            { "rhs": 349 },
+            { "rhs": 350 },
+            { "rhs": 351 },
+            { "rhs": 352 },
+            { "rhs": 353 },
+            { "rhs": 354 },
+            { "rhs": 355 },
+            { "rhs": 356 },
+            { "rhs": 357 },
+            { "rhs": 358 },
+            { "rhs": 359 },
+            { "rhs": 360 },
+            { "rhs": 361 },
+            { "rhs": 362 },
+            { "rhs": 363 },
+            { "rhs": 364 },
+            { "rhs": 365 },
+            { "rhs": 366 },
+            { "rhs": 367 },
+            { "rhs": 368 },
+            { "rhs": 369 },
+            { "rhs": 370 },
+            { "rhs": 371 },
+            { "rhs": 372 },
+            { "rhs": 373 }
+          ],
+          "novelLhs": [],
+          "novelRhs": [
+            347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363,
+            364, 365, 366, 367, 368, 369, 370, 371, 372, 373
+          ]
+        }
+      ],
+      "lhsSrc": {
+        "isBinary": false,
+        "isSubmodule": false,
+        "oid": "a629e263fc8c925ade2cc50b5ecadc51c7421e8b",
+        "path": "sitesd/sitefeed/feed_test.go",
+        "size": 16727
+      },
+      "rhsSrc": {
+        "isBinary": false,
+        "isSubmodule": false,
+        "oid": "783fd2906312a7896f57349d18eafbfea8cfc2bf",
+        "path": "sitesd/sitefeed/feed_test.go",
+        "size": 19024
+      }
+    }
+  ]
+}
