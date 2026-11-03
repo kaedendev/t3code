@@ -1,5 +1,6 @@
 import {
   SourceControlProviderKind,
+  type PullRequestRound,
   type PullRequestReviewCapabilities,
   type PullRequestReviewerCapabilities,
 } from "@t3tools/contracts";
@@ -68,6 +69,23 @@ export function fakePullRequestProvider(
     listReviewerCandidates: () => Effect.succeed({ candidates: [], truncated: false }),
     setReviewerRequest: () => Effect.void,
     ...overrides,
+  };
+}
+
+/**
+ * A host that keeps `rounds`, so the round picker and its diff selection can be exercised. Diffs
+ * still die unless supplied; the selection each read asked for arrives as `round`.
+ */
+export function fakeRoundsPullRequestProvider(
+  kind: string,
+  rounds: ReadonlyArray<PullRequestRound>,
+  overrides: Partial<PullRequestProviderApi> = {},
+): PullRequestProviderApi {
+  const provider = fakePullRequestProvider(kind, overrides);
+  return {
+    ...provider,
+    capabilities: { ...provider.capabilities, rounds: true },
+    listRounds: overrides.listRounds ?? (() => Effect.succeed(rounds)),
   };
 }
 

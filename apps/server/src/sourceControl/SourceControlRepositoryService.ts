@@ -1,3 +1,4 @@
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -150,12 +151,15 @@ function publishPushFailureDetail(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
   readonly reason: GitCommandFailureReason | undefined;
+  readonly sshKeysUrl: string | undefined;
 }): string {
   const created = `Created ${input.urls.nameWithOwner} and added it as remote "${input.remoteName}", but the push failed`;
   const switchToHttps = `git remote set-url ${input.remoteName} ${input.urls.url}`;
   const usesSsh = input.remoteUrl === input.urls.sshUrl;
   switch (input.reason) {
     case "authentication_failed":
+      if (usesSsh && input.sshKeysUrl !== undefined)
+        return `${created} because the host does not know this machine's SSH key. Add the key at ${input.sshKeysUrl}, then push again.`;
       return usesSsh
         ? `${created} because SSH authentication was rejected. Add an SSH key to your account, or switch the remote to HTTPS with "${switchToHttps}", then push again.`
         : `${created} because Git could not authenticate. Check your Git credentials, then push again.`;
@@ -510,7 +514,13 @@ export const make = Effect.gen(function* () {
             remoteName: preferredRemoteName,
             remoteUrl,
             pushFailureDetail: (cause, remoteName) =>
-              publishPushFailureDetail({ urls, remoteName, remoteUrl, reason: cause.reason }),
+              publishPushFailureDetail({
+                urls,
+                remoteName,
+                remoteUrl,
+                reason: cause.reason,
+                sshKeysUrl: sourceControlDefinitions.get(providerKind).sshKeysUrl,
+              }),
           })
           .pipe(
             Effect.mapError(
@@ -571,6 +581,7 @@ export const make = Effect.gen(function* () {
                 remoteName,
                 remoteUrl,
                 reason: cause.reason,
+                sshKeysUrl: sourceControlDefinitions.get(providerKind).sshKeysUrl,
               }),
               cause,
             }),

@@ -1,0 +1,19 @@
+{
+  "cid": "bafyreickmzgrmw7ehw4etos3w5rexthpajcign32bek6m2uoeyg6mmencm",
+  "uri": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.track.ticket/4669",
+  "value": {
+    "$type": "org.tangled.track.ticket",
+    "body": {
+      "$type": "org.tangled.markup.markdown",
+      "text": "Signed-off-by: oppiliappan <me@oppi.li>"
+    },
+    "createdAt": "2026-11-02T23:53:56Z",
+    "state": "open",
+    "targetBranch": "master",
+    "title": {
+      "$type": "org.tangled.markup.markdown#inline",
+      "text": "sitesd: accept padded base64 in refs records"
+    },
+    "x-tngl-editor": "did:plc:qfpnj4og54vl56wngdriaxug"
+  }
+}

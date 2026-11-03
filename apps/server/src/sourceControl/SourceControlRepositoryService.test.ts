@@ -716,6 +716,24 @@ it.effect("explains a rejected SSH push after creating the repository", () =>
   }).pipe(Effect.provide(layer({ git: failingPush("authentication_failed") }))),
 );
 
+it.effect("sends a refused SSH push to the host's key settings when it takes no HTTPS push", () =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.publishRepository({
+        cwd: "/workspace",
+        provider: SourceControlProviderKind.make("tangled"),
+        repository: "octocat/t3code",
+        visibility: "public",
+        protocol: "ssh",
+      }),
+    );
+
+    assert.include(error.detail, "Add the key at https://tangled.org/settings/keys");
+    assert.notInclude(error.detail, "HTTPS");
+  }).pipe(Effect.provide(layer({ git: failingPush("authentication_failed") }))),
+);
+
 // regression: #19219 publishing did not explain why the first push failed
 it.effect("says the repository exists when an unclassified publish push fails", () =>
   Effect.gen(function* () {
