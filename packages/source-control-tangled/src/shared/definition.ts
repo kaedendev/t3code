@@ -89,11 +89,21 @@ export function parseTangledRemote(remoteUrl: string): TangledRemote | null {
     path = scp[2] ?? "";
   }
   const repository = parseTangledRepositoryPath(path);
-  if (repository === null) return null;
-  // Only a knot names a repository by its DID, so that path claims any host, as a self-hosted
-  // knot's; `owner/name` on an unknown host could be any forge's.
-  if (!isTangledHost(host) && repository.kind !== "repo-did") return null;
+  if (repository === null || !claimsRepository(host, repository)) return null;
   return { repository, knot: isWebHost(host) ? null : host.toLowerCase() };
+}
+
+const SELF_HOSTED_KNOT = /^knot[0-9-]*\./iu;
+const HANDLE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/iu;
+
+/**
+ * Only a knot names a repository by its DID, so that path claims any host. `owner/name` could be
+ * any forge's, so off Tangled's hosts it needs a knot-named host (`knot.example.com`, as Tangled's
+ * docs name them) and an atproto owner: a handle, which has a dot, or a DID.
+ */
+function claimsRepository(host: string, repository: TangledRepositoryRef): boolean {
+  if (isTangledHost(host) || repository.kind === "repo-did") return true;
+  return SELF_HOSTED_KNOT.test(host) && (HANDLE.test(repository.owner) || isDid(repository.owner));
 }
 
 /** A repository named as T3 hands it to the server: a DID, `owner/name`, or a remote. */
@@ -126,8 +136,7 @@ function repositoryKeyFromRemote(key: string): string | null {
     (() => {
       const [host = "", ...path] = key.split("/");
       const repository = parseTangledRepositoryPath(path.join("/"));
-      if (repository === null) return null;
-      return isTangledHost(host) || repository.kind === "repo-did" ? { repository } : null;
+      return repository !== null && claimsRepository(host, repository) ? { repository } : null;
     })();
   return remote === null ? null : tangledRepositoryKey(remote.repository);
 }
