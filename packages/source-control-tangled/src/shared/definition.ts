@@ -185,6 +185,7 @@ export const definition = defineSourceControl({
   publishDescription: TANGLED_WEB_HOST,
   publishHost: () => TANGLED_WEB_HOST,
   newRepositoryOwner: (account) => (account ? { owner: account } : null),
+  publicRepositoriesOnly: true,
   // Pushing over HTTPS needs a credential helper minting tokens; SSH needs only a key.
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ repository, number, webUrl }) => {

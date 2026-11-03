@@ -5,6 +5,7 @@ import {
   secretSetting,
   SourceControlProviderKind,
   type SourceControlProviderInfo,
+  type SourceControlRepositoryVisibility,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
@@ -258,6 +259,8 @@ export interface SourceControlDefinition {
   readonly publishDescription: string;
   readonly publishHost: (signedInHost: string | null) => string;
   readonly newRepositoryOwner: (account: string | null) => { readonly owner: string | null } | null;
+  /** The host has no private repositories, so T3 creates public ones there. */
+  readonly publicRepositoriesOnly?: boolean;
   readonly defaultCloneTransport: "https" | "ssh";
   readonly changeRequestUrl: (input: ChangeRequestUrlInput) => string | null;
   readonly commitUrl?: (input: CommitUrlInput) => string | null;
@@ -437,6 +440,12 @@ export function remoteWebOrigin(host: string, remoteUrl: string | undefined): st
   }
   return `https://${host}`;
 }
+
+/** What a repository T3 creates on the host is, unless the user picks otherwise. */
+export const newRepositoryVisibility = (
+  definition: Pick<SourceControlDefinition, "publicRepositoriesOnly">,
+): SourceControlRepositoryVisibility =>
+  definition.publicRepositoriesOnly === true ? "public" : "private";
 
 export function defineSourceControl<const Definition extends SourceControlDefinition>(
   definition: Definition,

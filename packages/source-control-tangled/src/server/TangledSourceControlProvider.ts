@@ -11,9 +11,11 @@ import {
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 
 import {
   definition,
@@ -31,6 +33,9 @@ const SIGN_IN_HINT = "Sign in to Tangled in Settings → Source control → Tang
 const PAGE_SIZE = 100;
 /** Tickets read per state looking for a branch's pull request; Tangled cannot filter by branch. */
 const BRANCH_SCAN_LIMIT = 200;
+/** Where `tg repo create` and the web put a new repository unless told otherwise. */
+const DEFAULT_KNOT = "knot1.tangled.sh";
+const REPOSITORY_NAME = /^(?!\.)[A-Za-z0-9._-]{1,100}(?<!\.)$/u;
 
 type ApiError = TangledApi.TangledApiError | TangledAuthError;
 
@@ -341,6 +346,63 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  /**
+   * A new repository is minted by a knot and claimed by a declaration on the owner's PDS, as
+   * `tg repo create` and the web do. The declaration is looked for first, since a repository the
+   * knot made cannot be removed again: the sign-in has no `deleteRepo` scope.
+   */
+  const createRepository: SourceControlProvider.SourceControlProvider["Service"]["createRepository"] =
+    Effect.fn("TangledSourceControlProvider.createRepository")(function* (input) {
+      const operation = "createRepository";
+      const refuse = (detail: string) => error(operation, input.cwd, detail);
+      if (input.visibility !== "public")
+        return yield* refuse("Tangled repositories are public. Create a public one instead.");
+      const viewer = Option.getOrNull(yield* auth.viewer);
+      if (viewer === null) return yield* refuse(SIGN_IN_HINT);
+      const [owner = "", ...rest] = input.repository.split("/");
+      const name = rest.join("/").replace(/\.git$/iu, "");
+      if (![viewer.handle, viewer.did].some((own) => own.toLowerCase() === owner.toLowerCase()))
+        return yield* refuse(`T3 Code creates Tangled repositories only as ${viewer.handle}.`);
+      if (!REPOSITORY_NAME.test(name) || name.includes("..") || name.toLowerCase() === "self")
+        return yield* refuse(
+          "Use letters, numbers, single periods, hyphens and underscores in the name, up to 100 of them, not starting or ending with a period.",
+        );
+      const failed = fromApi(operation, input.cwd);
+      const slot = { collection: TangledApi.COLLECTION.declaration, rkey: name.toLowerCase() };
+      if (Option.isSome(yield* auth.getRecord(slot).pipe(Effect.mapError(failed))))
+        return yield* refuse(`You already have a Tangled repository named ${name}.`);
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      const repoDid = yield* api
+        .createRepo({ knot: DEFAULT_KNOT, name, createdAt })
+        .pipe(Effect.mapError(failed));
+      yield* auth
+        .createRecord({
+          ...slot,
+          record: { $type: TangledApi.COLLECTION.declaration, repo: repoDid, createdAt },
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            refuse(
+              `${DEFAULT_KNOT} made the repository as ${repoDid}, but it could not be claimed for you: ${cause.detail} T3 Code cannot remove it; ask the knot's operator to.`,
+            ),
+          ),
+        );
+      // The first push reads the repository through Tangled's index, which learns of it shortly.
+      yield* api
+        .resolveRepository({ kind: "repo-did", repoDid })
+        .pipe(
+          Effect.retry(Schedule.spaced(Duration.seconds(1))),
+          Effect.timeoutOption(Duration.seconds(10)),
+          Effect.ignore,
+        );
+      // Remotes name the repo DID, so they outlive renames of the repository or its owner.
+      return {
+        nameWithOwner: `${viewer.handle}/${name}`,
+        url: `https://${TANGLED_WEB_HOST}/${repoDid}`,
+        sshUrl: `git@${TANGLED_WEB_HOST}:${repoDid}`,
+      };
+    });
+
   return SourceControlProvider.SourceControlProvider.of({
     kind: KIND,
     refineRepositoryIdentity,
@@ -442,17 +504,7 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
-    // A new repository is claimed by a declaration record on the owner's own PDS, a write
-    // TangledAuth does not offer.
-    createRepository: Effect.fn("TangledSourceControlProvider.createRepository")((input) =>
-      Effect.fail(
-        error(
-          "createRepository",
-          input.cwd,
-          "Create the repository on tangled.org, then add it to T3 Code by its URL.",
-        ),
-      ),
-    ),
+    createRepository,
     getDefaultBranch: Effect.fn("TangledSourceControlProvider.getDefaultBranch")((input) =>
       resolveTarget("getDefaultBranch", input).pipe(
         Effect.map((repository) => repository.defaultBranch),

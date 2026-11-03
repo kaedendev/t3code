@@ -6,7 +6,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import { definition } from "../shared/definition.ts";
-import { fakeTangled, KAEDEN, type FakeRoute, type RecordedRequest } from "./fakeTangled.ts";
+import {
+  FAKE_PDS,
+  fakeTangled,
+  KAEDEN,
+  type FakeRoute,
+  type RecordedRequest,
+} from "./fakeTangled.ts";
 import * as TangledSourceControlProvider from "./TangledSourceControlProvider.ts";
 
 const REPO = "did:plc:renamedrepoaaaaaaaaaaaaa";
@@ -388,6 +394,103 @@ describe("TangledSourceControlProvider", () => {
         yield* push;
         assert.deepStrictEqual(fake.writes(), []);
       }).pipe(Effect.provide(pushedLayer(fake)));
+    });
+  });
+
+  describe("creating a repository", () => {
+    const NEW = "did:plc:newrepoaaaaaaaaaaaaaaaaa";
+    const DECLARATION = `at://${KAEDEN.did}/org.tangled.repo.declaration/demo`;
+    const createRoutes = (
+      overrides: { readonly declared?: boolean; readonly claim?: FakeRoute } = {},
+    ): Record<string, FakeRoute> => ({
+      "com.atproto.repo.getRecord": (request: RecordedRequest) =>
+        request.host === FAKE_PDS && overrides.declared
+          ? { body: { uri: DECLARATION, cid: "bafyold" } }
+          : undefined,
+      "org.tangled.repo.createRepo": { did: NEW },
+      "com.atproto.repo.createRecord": overrides.claim ?? { uri: DECLARATION, cid: "bafydecl" },
+      "org.tangled.repo.getRepoByRepoDid": manifest("Demo"),
+    });
+    const createRepository = (visibility: "public" | "private" = "public") =>
+      Effect.gen(function* () {
+        const provider = yield* TangledSourceControlProvider.make;
+        return yield* provider.createRepository({
+          cwd: "/repo",
+          repository: "kaeden.codes/Demo",
+          visibility,
+        });
+      });
+
+    it.effect("has the knot mint it, then claims it on the owner's PDS", () => {
+      const fake = fakeTangled(createRoutes());
+      return Effect.gen(function* () {
+        const urls = yield* createRepository();
+        assert.deepStrictEqual(
+          fake.requests.map((request) => [request.method, request.host, request.nsid]),
+          [
+            ["GET", FAKE_PDS, "com.atproto.repo.getRecord"],
+            ["POST", "knot1.tangled.sh", "org.tangled.repo.createRepo"],
+            ["POST", FAKE_PDS, "com.atproto.repo.createRecord"],
+            ["GET", "api.tangled.org", "org.tangled.repo.getRepoByRepoDid"],
+            ["GET", "api.tangled.org", "blue.microcosm.identity.resolveMiniDoc"],
+          ],
+        );
+        const [lookup, mint, claim] = fake.requests;
+        assert.deepStrictEqual(
+          [lookup?.params.get("collection"), lookup?.params.get("rkey")],
+          ["org.tangled.repo.declaration", "demo"],
+        );
+        assert.deepStrictEqual(mint?.body, { name: "Demo", createdAt: "1970-01-01T00:00:00.000Z" });
+        assert.deepStrictEqual(fake.minted, [
+          { aud: "did:web:knot1.tangled.sh", lxm: "org.tangled.repo.createRepo" },
+        ]);
+        assert.deepStrictEqual(claim?.body, {
+          repo: KAEDEN.did,
+          collection: "org.tangled.repo.declaration",
+          rkey: "demo",
+          record: {
+            $type: "org.tangled.repo.declaration",
+            repo: NEW,
+            createdAt: "1970-01-01T00:00:00.000Z",
+          },
+        });
+        assert.deepStrictEqual(urls, {
+          nameWithOwner: "kaeden.codes/Demo",
+          url: `https://tangled.org/${NEW}`,
+          sshUrl: `git@tangled.org:${NEW}`,
+        });
+      }).pipe(Effect.provide(layerFor(fake)));
+    });
+
+    it.effect("asks no knot for a repository the owner already declared", () => {
+      const fake = fakeTangled(createRoutes({ declared: true }));
+      return Effect.gen(function* () {
+        const failure = yield* createRepository().pipe(Effect.flip);
+        assert.include(failure.detail, "already have a Tangled repository named Demo");
+        assert.deepStrictEqual(fake.writes(), []);
+      }).pipe(Effect.provide(layerFor(fake)));
+    });
+
+    it.effect("refuses a private repository before asking anyone", () => {
+      const fake = fakeTangled(createRoutes());
+      return Effect.gen(function* () {
+        const failure = yield* createRepository("private").pipe(Effect.flip);
+        assert.include(failure.detail, "public");
+        assert.deepStrictEqual(fake.requests, []);
+      }).pipe(Effect.provide(layerFor(fake)));
+    });
+
+    it.effect("names the minted repository when its claim fails", () => {
+      const fake = fakeTangled(
+        createRoutes({
+          claim: () => ({ status: 400, body: { error: "InvalidRequest", message: "no scope" } }),
+        }),
+      );
+      return Effect.gen(function* () {
+        const failure = yield* createRepository().pipe(Effect.flip);
+        assert.include(failure.detail, NEW);
+        assert.include(failure.detail, "no scope");
+      }).pipe(Effect.provide(layerFor(fake)));
     });
   });
 });

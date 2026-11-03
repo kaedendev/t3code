@@ -150,8 +150,11 @@ Tangled merges by rebasing onto the target branch, so that is the only merge met
 has no draft pull requests, requested reviewers, review approvals or line comments; comments on a
 pull request apply to the whole pull request. Checks come from the repository's spindle. A run for
 a pull request from someone outside the repository waits until a collaborator approves it on
-Tangled. Creating a Tangled repository from T3 Code is not available yet: create it on tangled.org,
-then add it by its URL.
+Tangled.
+
+Publishing a project to Tangled creates a public repository in your own account on the default
+knot, `knot1.tangled.sh`. Tangled has no private repositories. To use another knot, create the
+repository on tangled.org, then add it by its URL.
 
 ## Start, clone, or publish a project
 

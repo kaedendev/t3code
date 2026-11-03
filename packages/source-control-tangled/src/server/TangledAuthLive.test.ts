@@ -64,6 +64,7 @@ function harness(
   const authorized: Array<string> = [];
   const callbacks: Array<URLSearchParams> = [];
   const fetched: Array<string> = [];
+  const sent: Array<RequestInit | undefined> = [];
   const client: TangledAuthLive.TangledOAuthClient = {
     authorize: async (account) => {
       authorized.push(account);
@@ -74,9 +75,10 @@ function harness(
       if (params.has("error")) throw new Error(params.get("error") ?? "");
       return { did: DID };
     },
-    fetch: (did, path) => {
+    fetch: (did, path, init) => {
       fetched.push(path);
-      return options.fetch?.(did, path) ?? Promise.resolve(Response.json({ token: "jwt" }));
+      sent.push(init);
+      return options.fetch?.(did, path, init) ?? Promise.resolve(Response.json({ token: "jwt" }));
     },
     handle: async () => "kaeden.codes",
   };
@@ -89,7 +91,7 @@ function harness(
     Layer.provideMerge(host),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, relay.http)),
   );
-  return { layer, relay, authorized, callbacks, fetched };
+  return { layer, relay, authorized, callbacks, fetched, sent };
 }
 
 const signedIn = { "tangled.org": JSON.stringify(savedSession()) };
@@ -222,6 +224,36 @@ describe("TangledAuthLive session", () => {
       expect(failure.reason).toBe(reason);
     }).pipe(Effect.provide(harness({ signIns, ...(fetch && { fetch }) }).layer)),
   );
+
+  it.effect("reads and writes the viewer's own records on their PDS", () => {
+    const declaration = { uri: `at://${DID}/org.tangled.repo.declaration/demo`, cid: "bafydecl" };
+    const { layer, fetched, sent } = harness({
+      signIns: signedIn,
+      fetch: (_did, path) =>
+        Promise.resolve(
+          path.includes("getRecord")
+            ? Response.json(
+                { error: "RecordNotFound", message: "Could not locate record" },
+                { status: 400 },
+              )
+            : Response.json(declaration),
+        ),
+    });
+    return Effect.gen(function* () {
+      const auth = yield* TangledAuth;
+      const slot = { collection: "org.tangled.repo.declaration", rkey: "demo" };
+      expect(Option.isNone(yield* auth.getRecord(slot))).toBe(true);
+      const record = { $type: "org.tangled.repo.declaration", repo: "did:plc:newrepo" };
+      expect(yield* auth.createRecord({ ...slot, record })).toEqual(declaration);
+      expect(fetched).toEqual([
+        `/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(DID)}&collection=org.tangled.repo.declaration&rkey=demo`,
+        "/xrpc/com.atproto.repo.createRecord",
+      ]);
+      expect(sent[0]).toBeUndefined();
+      expect(sent[1]?.method).toBe("POST");
+      expect(JSON.parse(String(sent[1]?.body))).toEqual({ repo: DID, ...slot, record });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("keeps the library's session in the signIns secret across restarts", () =>
     Effect.gen(function* () {
