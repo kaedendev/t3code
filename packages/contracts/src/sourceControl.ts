@@ -187,12 +187,17 @@ export class SourceControlProviderError extends Schema.TaggedError<SourceControl
 export const SourceControlSignInInput = Schema.Struct({
   provider: SourceControlProviderKind,
   host: TrimmedNonEmptyString,
+  /** The account to sign in as, for a forge that must find it first, as atproto finds a PDS. */
+  account: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type SourceControlSignInInput = typeof SourceControlSignInInput.Type;
 
-/** A device-flow code the user enters at `verificationUri` in any browser. */
+/**
+ * Where the user approves the sign-in: with a device code they enter at `verificationUri` in any
+ * browser, or without one, by opening `verificationUri` itself.
+ */
 export const SourceControlSignInPrompt = Schema.Struct({
-  userCode: TrimmedNonEmptyString,
+  userCode: Schema.optionalKey(TrimmedNonEmptyString),
   verificationUri: TrimmedNonEmptyString,
   expiresAt: Schema.Number,
 });

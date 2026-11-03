@@ -177,23 +177,27 @@ export interface SourceControlHostCredentials {
   /** What a token must be granted, completing "Give it …". */
   readonly tokenAccess: string;
   readonly newTokenUrl: (host: string) => string;
-  /** Signing in through the forge's own app instead of a token or CLI login. */
-  readonly appSignIn?: SourceControlAppSignIn;
 }
 
 /**
- * A forge app the server signs in to with a device code, on the hosts it is registered on. The
- * session it keeps is the `signIns` setting, which takes precedence over everything but a saved
- * token.
+ * A forge app the server signs in to, on the hosts it is registered on. The session it keeps is
+ * the `signIns` setting, which takes precedence over everything but a saved token.
  */
 export interface SourceControlAppSignIn {
   /** The app's name on the forge, as the consent screen shows it. */
   readonly appName: string;
   readonly hosts: ReadonlyArray<string>;
-  /** Where an account or organization installs the app so it can reach its repositories. */
-  readonly installUrl: string;
+  /** What signing in gets the user, shown before they sign in. */
+  readonly summary: string;
+  /**
+   * Set when the sign-in starts from the user's account, as atproto must find the account's PDS
+   * before it can ask for consent. Clients ask for it and pass it as the sign-in's `account`.
+   */
+  readonly account?: { readonly label: string; readonly placeholder: string };
+  /** Where an account or organization installs the app; absent when there is nothing to install. */
+  readonly installUrl?: string;
   /** Where the user revokes the app's access entirely. */
-  readonly revokeUrl: string;
+  readonly revokeUrl?: string;
 }
 
 export const SourceControlHostName = TrimmedNonEmptyString.pipe(
@@ -206,6 +210,16 @@ export const HostAccountChoice = Schema.Struct({
 });
 export type HostAccountChoice = typeof HostAccountChoice.Type;
 
+/** The settings of a host with an `appSignIn`. */
+export const appSignInSettingsFields = {
+  /** The serialized session of an `appSignIn` per lower-case hostname, owned by the server's driver. */
+  signIns: Schema.Record(SourceControlHostName, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+};
+
 /** Per-hostname settings of a host with `credentials`, keyed by lower-case hostname. */
 export const hostCredentialSettingsFields = {
   hosts: Schema.Record(SourceControlHostName, HostAccountChoice).pipe(
@@ -217,12 +231,7 @@ export const hostCredentialSettingsFields = {
     secretSetting,
     Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
   ),
-  /** The serialized session of an `appSignIn`, owned by the server's driver. */
-  signIns: Schema.Record(SourceControlHostName, TrimmedString).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-    secretSetting,
-    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-  ),
+  ...appSignInSettingsFields,
 };
 
 export const HostCredentialSettings = Schema.Struct(hostCredentialSettingsFields);
@@ -241,6 +250,8 @@ export interface SourceControlDefinition {
   /** Further words settings search finds this host by, besides its label. */
   readonly searchKeywords?: ReadonlyArray<string>;
   readonly credentials?: SourceControlHostCredentials;
+  /** Signing in through the forge's own app; its settings include `appSignInSettingsFields`. */
+  readonly appSignIn?: SourceControlAppSignIn;
   readonly changeRequest: ChangeRequestTerminology;
   readonly repositoryPathHint: string;
   readonly publicHost: string | null;
