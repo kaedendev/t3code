@@ -678,7 +678,7 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
         // jj's local validation (description/conflicts/etc.) remains actionable. Only a failure
         // after transport began may be replaced with bounded hosting-specific guidance.
         const transportFailed =
-          /Failed to push|remote:|remote rejected|failed to connect|authentication failed|permission denied|could not resolve host/i.test(
+          /Failed to push|remote:|remote rejected|failed to connect|authentication failed|permission denied|could not resolve host|remote end hung up|ssh key doesn't match/i.test(
             result.stderr,
           );
         return yield* input.pushFailureDetail !== undefined && transportFailed

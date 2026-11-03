@@ -188,6 +188,7 @@ export const definition = defineSourceControl({
   publicRepositoriesOnly: true,
   // Pushing over HTTPS needs a credential helper minting tokens; SSH needs only a key.
   defaultCloneTransport: "ssh",
+  sshKeysUrl: "https://tangled.org/settings/keys",
   changeRequestUrl: ({ repository, number, webUrl }) => {
     if (!Number.isSafeInteger(number) || number < 1) return null;
     if (webUrl) return changeRequestUrlBelow(webUrl, `pulls/${number}`);

@@ -262,6 +262,11 @@ export interface SourceControlDefinition {
   /** The host has no private repositories, so T3 creates public ones there. */
   readonly publicRepositoriesOnly?: boolean;
   readonly defaultCloneTransport: "https" | "ssh";
+  /**
+   * Where the user adds an SSH key, for a host that takes pushes only over SSH. Advice for a
+   * refused push sends the user here instead of suggesting HTTPS.
+   */
+  readonly sshKeysUrl?: string;
   readonly changeRequestUrl: (input: ChangeRequestUrlInput) => string | null;
   readonly commitUrl?: (input: CommitUrlInput) => string | null;
   /** `known` is set when the caller already knows this host serves the URL's repository. */
