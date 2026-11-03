@@ -356,6 +356,10 @@ export class TangledApi extends Context.Service<
     readonly resolveRepository: (
       reference: TangledRepositoryRef,
     ) => Effect.Effect<TangledRepository, TangledApiError>;
+    /** The repository as last resolved, without asking Tangled; none when it is not held. */
+    readonly cachedRepository: (
+      reference: TangledRepositoryRef,
+    ) => Effect.Effect<Option.Option<TangledRepository>>;
     /** The owner and collaborators, who may merge; cached. */
     readonly listMaintainers: (
       repository: TangledRepository,
@@ -374,7 +378,8 @@ export class TangledApi extends Context.Service<
     readonly listRounds: (
       ticketUri: string,
     ) => Effect.Effect<ReadonlyArray<TangledRound>, TangledApiError>;
-    readonly forgetRounds: (ticketUri?: string) => Effect.Effect<void>;
+    /** One ticket's rounds, or every ticket's under a repository's `at://<repoDid>`; all without one. */
+    readonly forgetRounds: (uri?: string) => Effect.Effect<void>;
     readonly listComments: (
       subjectUri: string,
     ) => Effect.Effect<ReadonlyArray<TangledComment>, TangledApiError>;
@@ -766,6 +771,9 @@ export const make = Effect.gen(function* () {
     resolveRepository: Effect.fn("TangledApi.resolveRepository")((reference) =>
       Cache.get(repositories, tangledRepositoryKey(reference)),
     ),
+    cachedRepository: Effect.fn("TangledApi.cachedRepository")((reference) =>
+      Cache.getSuccess(repositories, tangledRepositoryKey(reference)),
+    ),
     listPulls: Effect.fn("TangledApi.listPulls")(function* (input) {
       const page = yield* read(
         NSID.listPulls,
@@ -804,9 +812,11 @@ export const make = Effect.gen(function* () {
       };
     }),
     listRounds: Effect.fn("TangledApi.listRounds")((uri) => Cache.get(rounds, uri)),
-    forgetRounds: Effect.fn("TangledApi.forgetRounds")((uri) =>
-      uri === undefined ? Cache.invalidateAll(rounds) : Cache.invalidate(rounds, uri),
-    ),
+    forgetRounds: Effect.fn("TangledApi.forgetRounds")(function* (uri) {
+      if (uri === undefined) return yield* Cache.invalidateAll(rounds);
+      for (const key of Array.from(yield* Cache.keys(rounds)))
+        if (key === uri || key.startsWith(`${uri}/`)) yield* Cache.invalidate(rounds, key);
+    }),
     listComments: Effect.fn("TangledApi.listComments")(function* (subjectUri) {
       const collected: Array<TangledComment> = [];
       let cursor: string | null = null;
