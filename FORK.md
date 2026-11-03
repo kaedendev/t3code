@@ -1,13 +1,13 @@
-# The kaedendev jj fork
+# The kaedendev fork
 
 This fork is T3 Code's latest upstream **stable** release plus Jujutsu (jj) support. It has its own release channel, and its servers and desktop apps update only from `kaedendev/t3code`.
 
 ## What the fork carries
 
-`jj/stable` is an upstream stable tag (`vX.Y.Z` on `pingdotgg/t3code`) with a short stack of fork commits on top. List the stack with:
+`kaeden/stable` is an upstream stable tag (`vX.Y.Z` on `pingdotgg/t3code`) with a short stack of fork commits on top. List the stack with:
 
 ```sh
-git log --oneline $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' jj/stable)..jj/stable
+git log --oneline $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' kaeden/stable)..kaeden/stable
 ```
 
 The stack has two parts:
@@ -38,12 +38,12 @@ Fork versions sort above every upstream release on the same minor version. Clien
 
 1. Run a draft build:
    ```sh
-   gh workflow run fork-release.yml --repo kaedendev/t3code --ref jj/stable
+   gh workflow run fork-release.yml --repo kaedendev/t3code --ref kaeden/stable
    ```
 2. Check the run's **Verify macOS signature** summary. It must show `Gatekeeper: Notarized Developer ID` and no problems. A publish run fails on any problem.
 3. Publish it:
    ```sh
-   gh workflow run fork-release.yml --repo kaedendev/t3code --ref jj/stable -f publish=true
+   gh workflow run fork-release.yml --repo kaedendev/t3code --ref kaeden/stable -f publish=true
    ```
 
 After a release is published, **Update everything** in a fork client moves the fleet. `t3 update` on a server also installs it. Desktop apps update themselves.
@@ -76,13 +76,13 @@ Do this once per machine. After that, updates come from the fork.
 An agent can run these steps unattended. Every gate must pass before anything ships.
 
 1. Find the newest upstream stable: `gh release view --repo pingdotgg/t3code --json tagName -q .tagName`. Call it `NEW`.
-2. Find the current base: `OLD=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' fork/jj/stable)`. If `NEW` equals `OLD`, stop.
-3. Create a worktree next to the others. Base a branch `jj/stable-$NEW` on `fork/jj/stable`, then run `git rebase --onto $NEW $OLD`.
+2. Find the current base: `OLD=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' fork/kaeden/stable)`. If `NEW` equals `OLD`, stop.
+3. Create a worktree next to the others. Base a branch `kaeden/stable-$NEW` on `fork/kaeden/stable`, then run `git rebase --onto $NEW $OLD`.
 4. Resolve each conflict so both upstream's change and the fork's intent survive. Never revert upstream work to make a hunk apply. Each commit must typecheck on its own.
 5. Find git calls that upstream added between `OLD` and `NEW` in `apps/server/src`, and route them by VCS kind. Record any you leave for later.
 6. Run the gates. All must pass:
    - `vp run check:changed $NEW`
    - `vp test run apps/server/src/jj apps/server/src/vcs apps/server/src/checkpointing apps/server/src/git scripts/fork-release-version.test.ts`
-7. Push `jj/stable-$NEW` to `fork`. Run a draft build from that branch with `--ref jj/stable-$NEW`.
+7. Push `kaeden/stable-$NEW` to `fork`. Run a draft build from that branch with `--ref kaeden/stable-$NEW`.
 8. Report to the owner: the new base, the conflicts and how each was resolved, the gate results, and the draft release.
-9. When the owner approves, force-move `jj/stable` to the new branch and publish a build from `jj/stable`.
+9. When the owner approves, force-move `kaeden/stable` to the new branch and publish a build from `kaeden/stable`.
