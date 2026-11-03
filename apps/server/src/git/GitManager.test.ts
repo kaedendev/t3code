@@ -1874,6 +1874,44 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("keys a pull request by the repository its host names rather than by its URL", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@tangled.org:alice.tngl.sh/project",
+        originDir,
+      );
+      const repositoryKey = "tangled.org/did:plc:renamedrepoaaaaaaaaaaaaa";
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          kind: "tangled",
+          prListOtherwise: [
+            {
+              number: 3,
+              title: "Survives a rename",
+              url: "https://tangled.org/alice.tngl.sh/project/pulls/3",
+              baseRefName: "main",
+              headRefName: "feature",
+              repositoryKey,
+            },
+          ],
+        },
+      });
+      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" })).toMatchObject({
+        number: 3,
+        repositoryKey,
+      });
+    }),
+  );
+
   it.effect.each([
     { remoteUrl: "git@gitlab.com:Group/Subgroup/Fork.git", setUpstream: true },
     { remoteUrl: "git@gitlab.com:Group/Subgroup/Fork.git", setUpstream: false },

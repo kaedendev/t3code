@@ -901,6 +901,9 @@ importers:
       '@t3tools/source-control-gitlab':
         specifier: workspace:*
         version: link:../../packages/source-control-gitlab
+      '@t3tools/source-control-tangled':
+        specifier: workspace:*
+        version: link:../../packages/source-control-tangled
       character-entities:
         specifier: 2.0.2
         version: 2.0.2
@@ -2209,6 +2212,9 @@ importers:
       '@t3tools/source-control-gitlab':
         specifier: workspace:*
         version: link:../source-control-gitlab
+      '@t3tools/source-control-tangled':
+        specifier: workspace:*
+        version: link:../source-control-tangled
 
   packages/source-control-forgejo:
     dependencies:
@@ -2351,9 +2357,6 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@t3tools/shared':
-        specifier: workspace:*
-        version: link:../shared
       '@t3tools/source-control-core':
         specifier: workspace:*
         version: link:../source-control-core

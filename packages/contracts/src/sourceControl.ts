@@ -35,6 +35,11 @@ export const ChangeRequest = Schema.Struct({
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /**
+   * The key of the change request's own repository, for a host whose URLs do not carry the
+   * identity it keys repositories by, as Tangled's repo DID. Absent means the URL's.
+   */
+  repositoryKey: Schema.optional(TrimmedNonEmptyString),
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
 

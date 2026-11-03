@@ -1707,7 +1707,7 @@ export const make = Effect.gen(function* () {
       mergedAt: latest.mergedAt ?? null,
       headSha: latest.headSha ?? null,
       // Hosting CLIs may target upstream; the PR URL identifies its actual repository.
-      repositoryKey: pullRequestRepositoryKey(latest.url),
+      repositoryKey: latest.repositoryKey ?? pullRequestRepositoryKey(latest.url),
     };
   });
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
