@@ -1,6 +1,6 @@
 # The kaedendev fork
 
-This fork is T3 Code's latest upstream **stable** release plus Jujutsu (jj) support. It has its own release channel, and its servers and desktop apps update only from `kaedendev/t3code`.
+This fork is T3 Code's latest upstream **stable** release plus Jujutsu (jj) support and a Tangled integration. It has its own release channel, and its servers and desktop apps update only from `kaedendev/t3code`.
 
 ## What the fork carries
 
@@ -10,17 +10,21 @@ This fork is T3 Code's latest upstream **stable** release plus Jujutsu (jj) supp
 git log --oneline $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' kaeden/stable)..kaeden/stable
 ```
 
-The stack has two parts:
+The stack has three parts:
 
 - **jj support.** It is a port of the community jj stack, upstream PRs #20749 to #20756, which upstream closed unmerged for lack of maintainer approval.
   - Colocated jj repos (`.jj` next to `.git`) use jj for checkpoints, diffs, status, workspaces, commit, push, and pull requests.
   - jj needs version 0.46.0 or newer on the server's `PATH`. When jj is missing, broken, or too old, the repo falls back to git and shows a notice.
+- **Tangled.** [Tangled](https://tangled.org), the AT Protocol git forge, is a source control host like GitHub. See the Tangled section of `docs/user/source-control.md`.
+  - The code is `packages/source-control-tangled`. It reads Tangled's public index at `api.tangled.org` and writes through the knot with service-auth tokens.
+  - Sign-in is atproto OAuth through a relay Worker at `t3-oauth.kaeden.codes` (`infra/tangled-oauth`). The relay serves the client metadata, signs client assertions with the key in `~/.config/t3-tangled-oauth/signing-key.json` on the devbox, and holds each sign-in callback until the server polls for it. Deploy it with `T3_TANGLED_OAUTH_SIGNING_KEY="$(cat ~/.config/t3-tangled-oauth/signing-key.json)" pnpm exec alchemy deploy --stage prod` from `infra/tangled-oauth`. Losing the key means generating a new one and signing in again.
+  - Pull requests have rounds. Pushing a branch with an open Tangled pull request submits a new round, and the review picker shows each round and what changed since an earlier one. The rounds picker works with any host that reports rounds.
 - **Release plumbing.**
   - `CLI_RELEASE_REPOSITORY` points at this fork.
   - `.github/workflows/fork-release.yml` builds releases.
   - `scripts/fork-release-version.ts` numbers them.
 
-Mobile code is unchanged. The App Store app works against a fork server and shows Git wording for jj repos.
+The App Store app works against a fork server. It shows Git wording for jj repos, and it has no Tangled sign-in, round picker or Resubmit action; sign in to Tangled from web or desktop, and the server keeps the session for every client.
 
 ## Known limits of jj support
 
@@ -82,7 +86,7 @@ An agent can run these steps unattended. Every gate must pass before anything sh
 5. Find git calls that upstream added between `OLD` and `NEW` in `apps/server/src`, and route them by VCS kind. Record any you leave for later.
 6. Run the gates. All must pass:
    - `vp run check:changed $NEW`
-   - `vp test run apps/server/src/jj apps/server/src/vcs apps/server/src/checkpointing apps/server/src/git scripts/fork-release-version.test.ts`
+   - `vp test run apps/server/src/jj apps/server/src/vcs apps/server/src/checkpointing apps/server/src/git apps/server/src/pullRequest packages/source-control-tangled infra/tangled-oauth scripts/fork-release-version.test.ts`
 7. Push `kaeden/stable-$NEW` to `fork`. Run a draft build from that branch with `--ref kaeden/stable-$NEW`.
 8. Report to the owner: the new base, the conflicts and how each was resolved, the gate results, and the draft release.
 9. When the owner approves, force-move `kaeden/stable` to the new branch and publish a build from `kaeden/stable`.
