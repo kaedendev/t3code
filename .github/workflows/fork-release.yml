@@ -2,7 +2,8 @@ name: Fork release
 
 # Releases the Jujutsu fork from the dispatched branch: CLI archives for linux-x64, linux-arm64,
 # and darwin-arm64, and the macOS arm64 desktop app with its update feed. Versions follow
-# scripts/fork-release-version.ts. T3 Connect stays unconfigured, so there is no relay state.
+# scripts/fork-release-version.ts. T3 Connect uses upstream's production relay and Clerk app; the
+# values are the public ones baked into upstream builds. Relay tracing stays off.
 on:
   workflow_dispatch:
     inputs:
@@ -39,6 +40,10 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       base: ${{ steps.version.outputs.base }}
       ref: ${{ steps.version.outputs.ref }}
+      clerk_publishable_key: pk_live_Y2xlcmsudDMuY29kZXMk
+      clerk_jwt_template: t3-relay
+      clerk_cli_oauth_client_id: hzxSgY2cH10sDU2r
+      relay_url: https://relay.t3.codes
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -125,6 +130,10 @@ jobs:
       - name: Build JS bundle
         env:
           T3CODE_TELEMETRY_CHANNEL: dev
+          T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.prepare.outputs.clerk_publishable_key }}
+          T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.prepare.outputs.clerk_jwt_template }}
+          T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+          T3CODE_RELAY_URL: ${{ needs.prepare.outputs.relay_url }}
         run: vp run build:desktop
 
       # Same layout as release.yml's js-bundle, so release-desktop.yml packages it unchanged.
@@ -153,10 +162,10 @@ jobs:
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: stable
       relay_client_tracing: false
-      clerk_publishable_key: ""
-      clerk_jwt_template: ""
-      clerk_cli_oauth_client_id: ""
-      relay_url: ""
+      clerk_publishable_key: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.prepare.outputs.relay_url }}
       label: macOS arm64
       runner: macos-latest
       platform: mac
@@ -177,10 +186,10 @@ jobs:
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: stable
       relay_client_tracing: false
-      clerk_publishable_key: ""
-      clerk_jwt_template: ""
-      clerk_cli_oauth_client_id: ""
-      relay_url: ""
+      clerk_publishable_key: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.prepare.outputs.relay_url }}
       label: Linux x64
       runner: ubuntu-latest
       platform: linux
@@ -199,10 +208,10 @@ jobs:
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: stable
       relay_client_tracing: false
-      clerk_publishable_key: ""
-      clerk_jwt_template: ""
-      clerk_cli_oauth_client_id: ""
-      relay_url: ""
+      clerk_publishable_key: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.prepare.outputs.relay_url }}
       label: Linux arm64
       runner: ubuntu-24.04-arm
       platform: linux
