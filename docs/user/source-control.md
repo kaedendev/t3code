@@ -325,7 +325,7 @@ For a non-colocated jj repository, the unsupported reason explains the colocatio
 
 Committing runs `jj commit`, using your typed message first, then an existing change description, and generating one only when both are empty. A new bookmark uses the same selected text. T3 Code selects the workspace's bookmark, or the nearest bookmarked descendant or ancestor of `@` in an ordinary workspace. Editing in the middle of a feature stack pushes its feature bookmark without rewinding the descendant tip or moving `main`. If the agent already committed the work and `@` is empty, T3 Code can advance the bookmark without creating another empty commit.
 
-After you amend, squash or describe changes under a pushed bookmark, **Push rewrite** replaces their pushed versions. Push still refuses when the remote has anything else, such as someone else's commits, or moved since jj last fetched.
+After you amend, squash, describe or rebase changes under a pushed bookmark, **Push rewrite** replaces their pushed versions. Push still refuses when the remote has anything else, such as someone else's commits, or moved since jj last fetched.
 
 Pull fetches the remote and refuses when the selected bookmark has unpublished commits. It rebases the existing working-copy change and its unbookmarked descendants onto that bookmark, keeping descriptions and edits, including dirty files. Automatic pull doesn't apply to Jujutsu repositories; use **Pull**.
 

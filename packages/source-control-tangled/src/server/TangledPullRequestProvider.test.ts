@@ -106,6 +106,35 @@ const completedRecord = {
   },
 };
 
+describe("TangledPullRequestProvider detail", () => {
+  it.effect("moves with a comment left on Tangled, so activity is read again", () => {
+    const comment = (createdAt: string) => ({
+      uri: `at://${REPO}/org.tangled.feed.comment/${createdAt}`,
+      cid: "bafycomment",
+      editor: OWNER,
+      createdAt,
+      body: { text: "lgtm" },
+      subject: { uri: TICKET, cid: "bafyview" },
+    });
+    let comments: ReadonlyArray<ReturnType<typeof comment>> = [];
+    const fake = fakeTangled(
+      routes({ "org.tangled.feed.listComments": () => ({ body: { items: comments } }) }),
+    );
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      const read = provider.getChangeRequest({
+        cwd: "/repo",
+        host: "tangled.org",
+        repository: "alice.tngl.sh/project",
+        number: 7,
+      });
+      assert.strictEqual((yield* read).updatedAt, "2026-11-02T10:00:00.000Z");
+      comments = [comment("2026-11-03T08:00:00Z")];
+      assert.strictEqual((yield* read).updatedAt, "2026-11-03T08:00:00.000Z");
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
 describe("TangledPullRequestProvider merge", () => {
   it.effect("only completes the ticket when the target already contains the head", () => {
     const fake = fakeTangled(routes({ "org.tangled.temp.git.getMergeBase": { commit: HEAD } }));

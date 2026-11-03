@@ -555,7 +555,7 @@ export const make = Effect.gen(function* () {
     getChangeRequest: Effect.fn("TangledPullRequestProvider.getChangeRequest")(function* (input) {
       const operation = "getChangeRequest";
       const { repository, ticket, round } = yield* loadPull(operation, input);
-      const [author, checks, files, permissions, mergeability] = yield* Effect.all(
+      const [author, checks, files, permissions, mergeability, comments] = yield* Effect.all(
         [
           actor(ticket.authorDid),
           checksFor(repository, round).pipe(Effect.orElseSucceed(() => [])),
@@ -593,12 +593,17 @@ export const make = Effect.gen(function* () {
                   ),
                   Effect.orElseSucceed(() => "unknown" as const),
                 ),
+          // A ticket's record never moves for a comment, yet clients reread activity only when
+          // `updatedAt` does.
+          api.listComments(ticket.uri).pipe(Effect.orElseSucceed(() => [])),
         ],
         { concurrency: "unbounded" },
       );
       const stats = Option.getOrElse(files, () => []).map(TangledPatch.lineStats);
+      const summary = toChangeRequest(repository, ticket, round, author, input.number);
       return {
-        ...toChangeRequest(repository, ticket, round, author, input.number),
+        ...summary,
+        updatedAt: latestOf(summary.updatedAt, ...comments.map((comment) => comment.createdAt)),
         mergeability,
         additions: stats.reduce((sum, file) => sum + file.additions, 0),
         deletions: stats.reduce((sum, file) => sum + file.deletions, 0),

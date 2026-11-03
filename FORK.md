@@ -18,6 +18,7 @@ The stack has three parts:
 - **Tangled.** [Tangled](https://tangled.org), the AT Protocol git forge, is a source control host like GitHub. See the Tangled section of `docs/user/source-control.md`.
   - The code is `packages/source-control-tangled`. It reads Tangled's public index at `api.tangled.org` and writes through the knot with service-auth tokens.
   - Sign-in is atproto OAuth through a relay Worker at `t3-oauth.kaeden.codes` (`infra/tangled-oauth`). The relay serves the client metadata, signs client assertions with the key in `~/.config/t3-tangled-oauth/signing-key.json` on the devbox, and holds each sign-in callback until the server polls for it. Deploy it with `T3_TANGLED_OAUTH_SIGNING_KEY="$(cat ~/.config/t3-tangled-oauth/signing-key.json)" pnpm exec alchemy deploy --stage prod` from `infra/tangled-oauth`. Losing the key means generating a new one and signing in again.
+  - The relay signs assertions and hands out callbacks without checking the caller. Sessions stay safe, since the PKCE verifier and DPoP key never leave the T3 server, but anyone could run a sign-in under the "T3 Code" client name, and a PDS that blocked that client would block T3's Tangled writes. Closing that needs a shared secret on the relay's assertion and callback routes, and the same secret in every T3 server's settings.
   - Pull requests have rounds. Pushing a branch with an open Tangled pull request submits a new round, and the review picker shows each round and what changed since an earlier one. The rounds picker works with any host that reports rounds.
 - **Release plumbing.**
   - `CLI_RELEASE_REPOSITORY` points at this fork.
@@ -29,7 +30,7 @@ The App Store app works against a fork server. It shows Git wording for jj repos
 ## Known limits of jj support
 
 - A stale workspace is reported, not repaired. If you rewrite a thread's change from another workspace, T3 shows "workspace is stale". Run `jj workspace update-stale` in that workspace yourself.
-- Push rewrites a published bookmark only with newer versions of its own changes, after an amend, squash or describe under it; the button then reads "Push rewrite". It refuses when the remote holds anything else, such as someone else's commits or a change dropped from the stack, or when the remote moved since jj last fetched. To overwrite on purpose, run `jj git push` from a terminal.
+- Push rewrites a published bookmark only with newer versions of its own changes, after an amend, squash, describe or rebase under it; the button then reads "Push rewrite". It refuses when the remote holds anything else, such as someone else's commits or a change dropped from the stack, or when the remote moved since jj last fetched. To overwrite on purpose, run `jj git push` from a terminal.
 - T3's status refresh snapshots the working copy. If a refresh lands while a `jj commit` or `jj describe` runs, that command can fail with "Concurrent checkout". The result is a divergent change; files on disk stay intact.
 
 ## Version numbers
