@@ -1,5 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
-import { SourceControlProviderKind, type RepositoryIdentity } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  SourceControlProviderKind,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -54,10 +58,16 @@ const contextFor = (remoteUrl: string) => ({
   remoteUrl,
 });
 
-const layerFor = (fake: ReturnType<typeof fakeTangled>, body = "") =>
+const layerFor = (fake: ReturnType<typeof fakeTangled>, body = "", knot?: string) =>
   Layer.mergeAll(
     fake.layer,
-    TestSourceControlHost.layer(),
+    TestSourceControlHost.layer(
+      knot === undefined
+        ? {}
+        : {
+            settings: { ...DEFAULT_SERVER_SETTINGS, sourceControlHosts: { tangled: { knot } } },
+          },
+    ),
     FileSystem.layerNoop({ readFileString: () => Effect.succeed(body) }),
   );
 
@@ -89,6 +99,39 @@ const ticket = (rkey: string, author: string) => ({
     targetBranch: "main",
     createdAt: "2026-11-01T10:00:00Z",
   },
+});
+
+describe("repository git URLs", () => {
+  const repository = (knot: string) => ({
+    repoDid: "did:plc:g6izqc7z7bqux3lukisdc7va",
+    ownerDid: "did:plc:aszazhqi6awopjhatmhcvqsr",
+    ownerHandle: "kaeden.codes",
+    name: "pig-cannon-sync",
+    knot,
+    defaultBranch: "main",
+    spindle: null,
+  });
+
+  it.each([
+    [
+      "knot1.tangled.sh",
+      "https://tangled.org/kaeden.codes/pig-cannon-sync",
+      "git@tangled.org:kaeden.codes/pig-cannon-sync",
+    ],
+    [
+      "knot.kaeden.codes",
+      "https://knot.kaeden.codes/did:plc:g6izqc7z7bqux3lukisdc7va",
+      "git@knot.kaeden.codes:did:plc:g6izqc7z7bqux3lukisdc7va",
+    ],
+  ])("reaches a repository on %s", (knot, url, sshUrl) => {
+    assert.deepStrictEqual(
+      TangledSourceControlProvider.repositoryGitUrls(
+        repository(knot),
+        "kaeden.codes/pig-cannon-sync",
+      ),
+      { url, sshUrl },
+    );
+  });
 });
 
 describe("TangledSourceControlProvider", () => {
@@ -473,6 +516,24 @@ describe("TangledSourceControlProvider", () => {
           sshUrl: `git@tangled.org:${NEW}`,
         });
       }).pipe(Effect.provide(layerFor(fake)));
+    });
+
+    it.effect("creates it on the knot set in Settings and hands back that knot's remotes", () => {
+      const fake = fakeTangled(createRoutes());
+      return Effect.gen(function* () {
+        const urls = yield* createRepository();
+        const mint = fake.requests.find((r) => r.nsid === "org.tangled.repo.createRepo");
+        assert.strictEqual(mint?.host, "knot.kaeden.codes");
+        assert.deepStrictEqual(fake.minted[0], {
+          aud: "did:web:knot.kaeden.codes",
+          lxm: "org.tangled.repo.createRepo",
+        });
+        assert.deepStrictEqual(urls, {
+          nameWithOwner: "kaeden.codes/Demo",
+          url: `https://knot.kaeden.codes/${NEW}`,
+          sshUrl: `git@knot.kaeden.codes:${NEW}`,
+        });
+      }).pipe(Effect.provide(layerFor(fake, "", "https://Knot.Kaeden.Codes/")));
     });
 
     it.effect("asks no knot for a repository the owner already declared", () => {

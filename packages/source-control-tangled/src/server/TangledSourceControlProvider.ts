@@ -10,6 +10,7 @@ import {
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,8 @@ import * as Schedule from "effect/Schedule";
 
 import {
   definition,
+  isTangledHost,
+  settings as tangledSettings,
   parseTangledRemote,
   parseTangledRepository,
   TANGLED_WEB_HOST,
@@ -35,9 +38,27 @@ const PAGE_SIZE = 100;
 const BRANCH_SCAN_LIMIT = 200;
 /** Where `tg repo create` and the web put a new repository unless told otherwise. */
 const DEFAULT_KNOT = "knot1.tangled.sh";
+const KNOT_HOST =
+  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::\d{1,5})?$/u;
 const REPOSITORY_NAME = /^(?!\.)[A-Za-z0-9._-]{1,100}(?<!\.)$/u;
 
 type ApiError = TangledApi.TangledApiError | TangledAuthError;
+
+/**
+ * Where git reaches a repository. Tangled's web host relays its own knots; a self-hosted knot is
+ * reached directly, by repo DID, because its SSH is often closed to everyone but its owner.
+ */
+export function repositoryGitUrls(
+  repository: Pick<TangledApi.TangledRepository, "knot" | "repoDid">,
+  path: string,
+) {
+  return isTangledHost(repository.knot)
+    ? { url: `https://${TANGLED_WEB_HOST}/${path}`, sshUrl: `git@${TANGLED_WEB_HOST}:${path}` }
+    : {
+        url: `https://${repository.knot}/${repository.repoDid}`,
+        sshUrl: `git@${repository.knot}:${repository.repoDid}`,
+      };
+}
 
 const changeRequestState = (state: TangledApi.TicketState): ChangeRequestState =>
   state === "completed" ? "merged" : state;
@@ -359,6 +380,22 @@ export const make = Effect.gen(function* () {
         return yield* refuse("Tangled repositories are public. Create a public one instead.");
       const viewer = Option.getOrNull(yield* auth.viewer);
       if (viewer === null) return yield* refuse(SIGN_IN_HINT);
+      const configured = yield* host.settings.get.pipe(
+        Effect.map(
+          (saved) =>
+            readSourceControlHostSettings(tangledSettings, saved.sourceControlHosts[KIND]).knot,
+        ),
+        Effect.orElseSucceed(() => ""),
+      );
+      const knot =
+        configured
+          .toLowerCase()
+          .replace(/^https?:\/\//u, "")
+          .replace(/\/+$/u, "") || DEFAULT_KNOT;
+      if (!KNOT_HOST.test(knot))
+        return yield* refuse(
+          `"${configured}" is not a knot's host name. Fix it in Settings → Source control → Tangled.`,
+        );
       const [owner = "", ...rest] = input.repository.split("/");
       const name = rest.join("/").replace(/\.git$/iu, "");
       if (![viewer.handle, viewer.did].some((own) => own.toLowerCase() === owner.toLowerCase()))
@@ -373,7 +410,7 @@ export const make = Effect.gen(function* () {
         return yield* refuse(`You already have a Tangled repository named ${name}.`);
       const createdAt = DateTime.formatIso(yield* DateTime.now);
       const repoDid = yield* api
-        .createRepo({ knot: DEFAULT_KNOT, name, createdAt })
+        .createRepo({ knot, name, createdAt })
         .pipe(Effect.mapError(failed));
       yield* auth
         .createRecord({
@@ -389,7 +426,7 @@ export const make = Effect.gen(function* () {
                   onSome: () => Effect.void,
                   onNone: () =>
                     api
-                      .deleteRepo({ knot: DEFAULT_KNOT, repoDid })
+                      .deleteRepo({ knot, repoDid })
                       .pipe(
                         Effect.flatMap(() =>
                           refuse(
@@ -403,7 +440,7 @@ export const make = Effect.gen(function* () {
                 (failure) => failure._tag !== "SourceControlProviderError",
                 () =>
                   refuse(
-                    `${DEFAULT_KNOT} made the repository as ${repoDid}, but it could not be claimed for you or removed again: ${cause.detail}`,
+                    `${knot} made the repository as ${repoDid}, but it could not be claimed for you or removed again: ${cause.detail}`,
                   ),
               ),
             ),
@@ -420,8 +457,7 @@ export const make = Effect.gen(function* () {
       // Remotes name the repo DID, so they outlive renames of the repository or its owner.
       return {
         nameWithOwner: `${viewer.handle}/${name}`,
-        url: `https://${TANGLED_WEB_HOST}/${repoDid}`,
-        sshUrl: `git@${TANGLED_WEB_HOST}:${repoDid}`,
+        ...repositoryGitUrls({ knot, repoDid }, repoDid),
       };
     });
 
@@ -519,11 +555,7 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const repository = yield* resolveTarget("getRepositoryCloneUrls", input);
         const path = TangledApi.repositoryPath(repository);
-        return {
-          nameWithOwner: path,
-          url: `https://${TANGLED_WEB_HOST}/${path}`,
-          sshUrl: `git@${TANGLED_WEB_HOST}:${path}`,
-        };
+        return { nameWithOwner: path, ...repositoryGitUrls(repository, path) };
       },
     ),
     createRepository,
@@ -551,17 +583,24 @@ export const make = Effect.gen(function* () {
         const ssh = input.context ? !/^https?:\/\//iu.test(input.context.remoteUrl) : true;
         const git = host.git;
         yield* Effect.gen(function* () {
-          // A repo DID never changes, so the remote outlives renames of the source repository.
+          const context = input.context;
           const remoteName =
-            input.context && contextRepoDid === round.sourceRepoDid
-              ? input.context.remoteName
-              : yield* git.ensureRemote({
-                  cwd: input.cwd,
-                  preferredName: "tangled",
-                  url: ssh
-                    ? `git@${TANGLED_WEB_HOST}:${round.sourceRepoDid}`
-                    : `https://${TANGLED_WEB_HOST}/${round.sourceRepoDid}`,
-                });
+            context !== undefined && contextRepoDid === round.sourceRepoDid
+              ? context.remoteName
+              : yield* api
+                  .resolveRepository({ kind: "repo-did", repoDid: round.sourceRepoDid })
+                  .pipe(
+                    Effect.mapError(fromApi(operation, input.cwd)),
+                    // A repo DID never changes, so the remote outlives renames of the source.
+                    Effect.map((source) => repositoryGitUrls(source, round.sourceRepoDid)),
+                    Effect.flatMap((urls) =>
+                      git.ensureRemote({
+                        cwd: input.cwd,
+                        preferredName: "tangled",
+                        url: ssh ? urls.sshUrl : urls.url,
+                      }),
+                    ),
+                  );
           const localBranch = pull.isCrossRepository
             ? `pr-${pull.number}/${remoteBranchName}`
             : remoteBranchName;

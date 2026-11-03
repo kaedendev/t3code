@@ -1,4 +1,10 @@
-import { makeProviderSettingsSchema, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  makeProviderSettingsSchema,
+  SourceControlProviderKind,
+  TrimmedString,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   buildCommitUrl,
   changeRequestUrlBelow,
@@ -18,7 +24,7 @@ const KIND = SourceControlProviderKind.make("tangled");
 export const TANGLED_WEB_HOST = "tangled.org";
 
 /** `tangled.sh` is the old name of the web host; `*.tangled.sh` are Tangled-run knots. */
-function isTangledHost(hostname: string): boolean {
+export function isTangledHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   return host === TANGLED_WEB_HOST || host === "tangled.sh" || host.endsWith(".tangled.sh");
 }
@@ -160,7 +166,18 @@ function parseCommitUrl(url: URL): CommitLink | null {
     : null;
 }
 
-export const settings = makeProviderSettingsSchema(appSignInSettingsFields);
+export const settings = makeProviderSettingsSchema({
+  ...appSignInSettingsFields,
+  knot: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Knot for new repositories",
+      description:
+        "The knot that publishing creates repositories on, as knot.example.com. You must be a member of it. Empty means Tangled's own knot.",
+      providerSettingsForm: { placeholder: "knot1.tangled.sh" },
+    }),
+  ),
+});
 export type TangledSettings = typeof settings.Type;
 
 export const definition = defineSourceControl({
