@@ -801,7 +801,11 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const t3Context =
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
-            { model: input.modelSelection.model, reasoningEffort: effort ?? undefined },
+            {
+              model: input.modelSelection.model,
+              reasoningEffort: effort ?? undefined,
+              cwd: input.runtimePolicy.cwd,
+            },
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
