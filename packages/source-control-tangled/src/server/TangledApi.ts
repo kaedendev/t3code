@@ -47,6 +47,7 @@ export const NSID = {
   mergeCommit: "sh.tangled.git.mergeCommit",
   receivePack: "org.tangled.git.receivePack",
   createRepo: "org.tangled.repo.createRepo",
+  deleteRepo: "org.tangled.repo.deleteRepo",
 } as const;
 
 export const COLLECTION = {
@@ -441,6 +442,10 @@ export class TangledApi extends Context.Service<
       readonly name: string;
       readonly createdAt: string;
     }) => Effect.Effect<string, TangledApiError | TangledAuthError>;
+    readonly deleteRepo: (input: {
+      readonly knot: string;
+      readonly repoDid: string;
+    }) => Effect.Effect<void, TangledApiError | TangledAuthError>;
     /** A procedure authorized by a service-auth token minted for exactly this call. */
     readonly write: (
       input: TangledWrite,
@@ -737,9 +742,24 @@ export const make = Effect.gen(function* () {
     return created.value.did;
   });
 
+  const deleteRepo = Effect.fn("TangledApi.deleteRepo")(function* (input: {
+    readonly knot: string;
+    readonly repoDid: string;
+  }) {
+    const token = yield* auth.serviceAuth({ aud: serviceDid(input.knot), lxm: NSID.deleteRepo });
+    yield* send({
+      operation: NSID.deleteRepo,
+      url: `https://${input.knot}/xrpc/${NSID.deleteRepo}`,
+      method: "POST",
+      token,
+      body: { repo: input.repoDid },
+    });
+  });
+
   return TangledApi.of({
     resolveIdentity,
     createRepo,
+    deleteRepo,
     listMaintainers: Effect.fn("TangledApi.listMaintainers")((repository) =>
       Cache.get(maintainers, `${repository.repoDid} ${repository.ownerDid}`),
     ),

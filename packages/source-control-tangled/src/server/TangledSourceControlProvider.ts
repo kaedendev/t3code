@@ -348,8 +348,8 @@ export const make = Effect.gen(function* () {
 
   /**
    * A new repository is minted by a knot and claimed by a declaration on the owner's PDS, as
-   * `tg repo create` and the web do. The declaration is looked for first, since a repository the
-   * knot made cannot be removed again: the sign-in has no `deleteRepo` scope.
+   * `tg repo create` and the web do. The declaration is looked for first so a name clash never
+   * mints a repository at all.
    */
   const createRepository: SourceControlProvider.SourceControlProvider["Service"]["createRepository"] =
     Effect.fn("TangledSourceControlProvider.createRepository")(function* (input) {
@@ -381,9 +381,31 @@ export const make = Effect.gen(function* () {
           record: { $type: TangledApi.COLLECTION.declaration, repo: repoDid, createdAt },
         })
         .pipe(
-          Effect.mapError((cause) =>
-            refuse(
-              `${DEFAULT_KNOT} made the repository as ${repoDid}, but it could not be claimed for you: ${cause.detail} T3 Code cannot remove it; ask the knot's operator to.`,
+          // A failed claim may still have landed, so the slot decides whether to undo the mint.
+          Effect.catch((cause) =>
+            auth.getRecord(slot).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onSome: () => Effect.void,
+                  onNone: () =>
+                    api
+                      .deleteRepo({ knot: DEFAULT_KNOT, repoDid })
+                      .pipe(
+                        Effect.flatMap(() =>
+                          refuse(
+                            `Tangled did not claim the new repository for you: ${cause.detail}`,
+                          ),
+                        ),
+                      ),
+                }),
+              ),
+              Effect.catchIf(
+                (failure) => failure._tag !== "SourceControlProviderError",
+                () =>
+                  refuse(
+                    `${DEFAULT_KNOT} made the repository as ${repoDid}, but it could not be claimed for you or removed again: ${cause.detail}`,
+                  ),
+              ),
             ),
           ),
         );

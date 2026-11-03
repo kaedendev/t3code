@@ -401,16 +401,29 @@ describe("TangledSourceControlProvider", () => {
     const NEW = "did:plc:newrepoaaaaaaaaaaaaaaaaa";
     const DECLARATION = `at://${KAEDEN.did}/org.tangled.repo.declaration/demo`;
     const createRoutes = (
-      overrides: { readonly declared?: boolean; readonly claim?: FakeRoute } = {},
-    ): Record<string, FakeRoute> => ({
-      "com.atproto.repo.getRecord": (request: RecordedRequest) =>
-        request.host === FAKE_PDS && overrides.declared
-          ? { body: { uri: DECLARATION, cid: "bafyold" } }
-          : undefined,
-      "org.tangled.repo.createRepo": { did: NEW },
-      "com.atproto.repo.createRecord": overrides.claim ?? { uri: DECLARATION, cid: "bafydecl" },
-      "org.tangled.repo.getRepoByRepoDid": manifest("Demo"),
-    });
+      overrides: {
+        readonly declared?: boolean;
+        readonly claim?: FakeRoute;
+        /** The claim's write landed even though its reply was an error. */
+        readonly claimLanded?: boolean;
+      } = {},
+    ): Record<string, FakeRoute> => {
+      let claimed = false;
+      const claim = overrides.claim ?? { uri: DECLARATION, cid: "bafydecl" };
+      return {
+        "com.atproto.repo.getRecord": (request: RecordedRequest) =>
+          request.host === FAKE_PDS && (overrides.declared || (claimed && overrides.claimLanded))
+            ? { body: { uri: DECLARATION, cid: "bafyold" } }
+            : undefined,
+        "com.atproto.repo.createRecord": (request: RecordedRequest) => {
+          claimed = true;
+          return typeof claim === "function" ? claim(request) : { body: claim };
+        },
+        "org.tangled.repo.createRepo": { did: NEW },
+        "org.tangled.repo.deleteRepo": {},
+        "org.tangled.repo.getRepoByRepoDid": manifest("Demo"),
+      };
+    };
     const createRepository = (visibility: "public" | "private" = "public") =>
       Effect.gen(function* () {
         const provider = yield* TangledSourceControlProvider.make;
@@ -480,16 +493,31 @@ describe("TangledSourceControlProvider", () => {
       }).pipe(Effect.provide(layerFor(fake)));
     });
 
-    it.effect("names the minted repository when its claim fails", () => {
-      const fake = fakeTangled(
-        createRoutes({
-          claim: () => ({ status: 400, body: { error: "InvalidRequest", message: "no scope" } }),
-        }),
-      );
+    const refusedClaim = () => ({
+      status: 400,
+      body: { error: "InvalidRequest", message: "no scope" },
+    });
+
+    it.effect("removes the minted repository when its claim is refused", () => {
+      const fake = fakeTangled(createRoutes({ claim: refusedClaim }));
       return Effect.gen(function* () {
         const failure = yield* createRepository().pipe(Effect.flip);
-        assert.include(failure.detail, NEW);
         assert.include(failure.detail, "no scope");
+        const removal = fake.requests.find((r) => r.nsid === "org.tangled.repo.deleteRepo");
+        assert.deepStrictEqual(removal?.body, { repo: NEW });
+        assert.deepStrictEqual(fake.minted.at(-1), {
+          aud: "did:web:knot1.tangled.sh",
+          lxm: "org.tangled.repo.deleteRepo",
+        });
+      }).pipe(Effect.provide(layerFor(fake)));
+    });
+
+    it.effect("keeps the repository when a claim that reported failure landed", () => {
+      const fake = fakeTangled(createRoutes({ claim: refusedClaim, claimLanded: true }));
+      return Effect.gen(function* () {
+        const urls = yield* createRepository();
+        assert.strictEqual(urls.url, `https://tangled.org/${NEW}`);
+        assert.isUndefined(fake.requests.find((r) => r.nsid === "org.tangled.repo.deleteRepo"));
       }).pipe(Effect.provide(layerFor(fake)));
     });
   });

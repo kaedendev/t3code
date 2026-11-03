@@ -25,6 +25,7 @@ export const SCOPES = [
   "rpc:com.atproto.repo.deleteRecord?aud=*",
   "rpc:com.atproto.repo.uploadBlob?aud=*",
   "rpc:org.tangled.repo.createRepo?aud=*",
+  "rpc:org.tangled.repo.deleteRepo?aud=*",
   "rpc:org.tangled.review.submitPatch?aud=*",
   "rpc:org.tangled.git.receivePack?aud=*",
   "rpc:org.tangled.ci.approvePipeline?aud=*",
