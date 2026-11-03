@@ -2,6 +2,11 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
+import {
+  pullRequestRoundEndsAtHead,
+  pullRequestRoundOptions,
+  selectPullRequestRoundOption,
+} from "@t3tools/client-runtime/pull-request-rounds";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
@@ -93,7 +98,9 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
@@ -263,6 +270,8 @@ function PullRequestCodeTab({
   detail,
   selectedCommitOid,
   onSelectedCommitChange,
+  selectedRoundKey = null,
+  onSelectedRoundChange,
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
   onFixFinding,
@@ -278,6 +287,8 @@ function PullRequestCodeTab({
   detail: PullRequestDetailView;
   selectedCommitOid: string | null;
   onSelectedCommitChange: (oid: string | null) => void;
+  selectedRoundKey?: string | null;
+  onSelectedRoundChange?: (key: string) => void;
   pendingFinding?: string | null;
   fixFindingLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
@@ -332,7 +343,17 @@ function PullRequestCodeTab({
     selectedCommitOid !== null && detail.commits.some((entry) => entry.oid === selectedCommitOid)
       ? selectedCommitOid
       : null;
-  const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
+  const roundOptions = pullRequestRoundOptions(
+    detail.capabilities.rounds === true ? detail.rounds : undefined,
+  );
+  const roundOption = selectPullRequestRoundOption(
+    roundOptions,
+    commit === null ? selectedRoundKey : null,
+  );
+  const round = roundOption?.selection ?? null;
+  // Line comments and their threads are anchored to the whole change's coordinates.
+  const wholeChange = commit === null && round === null;
+  const scopeKey = JSON.stringify([environmentId, referenceKey, commit, round]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
@@ -357,6 +378,7 @@ function PullRequestCodeTab({
         ...reference,
         ...(cursor === null ? {} : { cursor }),
         ...(commit === null ? {} : { commit }),
+        ...(round === null ? {} : { round }),
       },
     }),
   );
@@ -413,7 +435,11 @@ function PullRequestCodeTab({
   const refreshFirstDiffPage = useAtomRefresh(
     pullRequestEnvironment.diff({
       environmentId,
-      input: { ...reference, ...(commit === null ? {} : { commit }) },
+      input: {
+        ...reference,
+        ...(commit === null ? {} : { commit }),
+        ...(round === null ? {} : { round }),
+      },
     }),
   );
   const reviewKey = referenceKey;
@@ -443,10 +469,11 @@ function PullRequestCodeTab({
   const {
     setViewed,
     refresh: refreshFilesViewed,
-    enabled: filesViewedEnabled,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const filesViewedEnabled =
+    filesViewed.enabled && pullRequestRoundEndsAtHead(detail.rounds, round);
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
@@ -477,7 +504,8 @@ function PullRequestCodeTab({
     environmentId,
     reference,
     commit,
-    cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
+    round,
+    cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? roundOption?.key ?? "all"}`,
   });
   const hostReview = detail.capabilities.review;
   const review = {
@@ -485,11 +513,11 @@ function PullRequestCodeTab({
     reply: hostReview.reply && detail.viewerPermissions.comment,
     resolve: hostReview.resolve && detail.viewerPermissions.resolve,
   };
-  const canCommentOnLines = review.inlineComment && commit === null;
+  const canCommentOnLines = review.inlineComment && wholeChange;
   const rangeComments = hostReview.rangeComment === true;
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
-    commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
+    wholeChange && (review.inlineComment || onAddToAgentSelection !== undefined);
   // The cache key carries the theme, which is what the tokenizer caches against, so a theme
   // change is still a fresh parse. The patch's own hash is part of it too: a refreshed page
   // reuses its cursor, and a key of position alone would hand back the parse it replaced.
@@ -539,8 +567,8 @@ function PullRequestCodeTab({
   // File membership does not guarantee a rendered hunk for the thread.
   const placedThreadIds = (() => {
     const placed = new Set<string>();
-    // Commit diffs use different line coordinates; list conversations separately.
-    if (commit !== null) return placed;
+    // Commit and round diffs use different line coordinates; list conversations separately.
+    if (!wholeChange) return placed;
     for (const file of files) {
       const path = resolveFileDiffPath(file);
       for (const thread of detail.reviewThreads) {
@@ -580,7 +608,7 @@ function PullRequestCodeTab({
       if (!placedThreadIds.has(thread.id)) continue;
       groupAt(thread.side, thread.line).threads.push(thread);
     }
-    if (commit === null) {
+    if (wholeChange) {
       for (const comment of pendingComments) {
         if (comment.path !== path) continue;
         const anchor = getReviewPositionAnchor(comment.position);
@@ -1036,7 +1064,38 @@ function PullRequestCodeTab({
   const toolbar = (
     <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        {orderedCommits.length > 0 ? (
+        {roundOption !== null ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button size="xs" variant="secondary" />}
+              className="min-w-0 max-w-64"
+              aria-label={`Round: ${roundOption.label}`}
+            >
+              <span className="truncate">{roundOption.label}</span>
+              <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuRadioGroup
+                value={roundOption.key}
+                onValueChange={(value) => onSelectedRoundChange?.(value)}
+              >
+                {(["round", "since"] as const).map((kind) => (
+                  <DropdownMenuGroup key={kind}>
+                    <DropdownMenuLabel>{kind === "round" ? "Rounds" : "Compare"}</DropdownMenuLabel>
+                    {roundOptions
+                      .filter((option) => option.kind === kind)
+                      .map((option) => (
+                        <DropdownMenuRadioItem key={option.key} value={option.key} closeOnClick>
+                          {option.label}
+                        </DropdownMenuRadioItem>
+                      ))}
+                  </DropdownMenuGroup>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+        {orderedCommits.length > 0 && round === null ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button size="xs" variant="secondary" />}
@@ -1093,7 +1152,7 @@ function PullRequestCodeTab({
               {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
             </Button>
           ) : null}
-          {filesViewed.enabled && files.length > 0 ? (
+          {filesViewedEnabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
                 {filePaths.filter(isFileViewed).length} / {files.length}
@@ -1159,7 +1218,7 @@ function PullRequestCodeTab({
               </TooltipPopup>
             </Tooltip>
           ) : null}
-          {commit !== null && review.inlineComment ? (
+          {!wholeChange && review.inlineComment ? (
             <Tooltip>
               <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
                 <MessageSquareOffIcon
@@ -1168,7 +1227,8 @@ function PullRequestCodeTab({
                 />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                A comment is anchored to the whole change, so switch to All commits to write one.
+                A comment is anchored to the whole change, so switch to{" "}
+                {commit === null ? "the latest round" : "All commits"} to write one.
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -1397,7 +1457,13 @@ function PullRequestCodeTab({
   if (items.length === 0 && nextCursor === null) {
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
+        {commit !== null
+          ? "This commit has no file changes."
+          : round?.since !== undefined
+            ? `Nothing changed since round ${round.since}.`
+            : round !== null
+              ? "This round has no file changes."
+              : `This ${term} has no file changes.`}
       </p>,
     );
   }

@@ -376,14 +376,21 @@ export function PullRequestDetailPanel({
     onTabChange?.(next);
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
+  // A commit belongs to the latest round, so picking either one resets the other.
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
     readonly oid: string | null;
-  }>(() => ({ pullRequestKey, oid: null }));
-  const selectedCodeCommitOid =
-    codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
+    readonly roundKey: string | null;
+  }>(() => ({ pullRequestKey, oid: null, roundKey: null }));
+  const codeScope =
+    codeCommitScope.pullRequestKey === pullRequestKey
+      ? codeCommitScope
+      : { oid: null, roundKey: null };
   const selectCodeCommit = (oid: string | null) => {
-    setCodeCommitScope({ pullRequestKey, oid });
+    setCodeCommitScope({ pullRequestKey, oid, roundKey: null });
+  };
+  const selectCodeRound = (roundKey: string) => {
+    setCodeCommitScope({ pullRequestKey, oid: null, roundKey });
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);
@@ -1828,8 +1835,10 @@ export function PullRequestDetailPanel({
                     environmentId={environmentId}
                     reference={reference}
                     detail={detail}
-                    selectedCommitOid={selectedCodeCommitOid}
+                    selectedCommitOid={codeScope.oid}
                     onSelectedCommitChange={selectCodeCommit}
+                    selectedRoundKey={codeScope.roundKey}
+                    onSelectedRoundChange={selectCodeRound}
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}

@@ -1,3 +1,4 @@
+import { pullRequestDiffScope } from "./pullRequestDiffScope";
 import type { PullRequestDiffParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 
@@ -8,7 +9,7 @@ type Listener = (path: string) => void;
 const listeners = new Map<string, Set<Listener>>();
 
 export function pullRequestFileJumpScope(params: PullRequestDiffParams): string {
-  return JSON.stringify([pullRequestReviewKey(params), params.commit ?? null]);
+  return JSON.stringify([pullRequestReviewKey(params), pullRequestDiffScope(params).key]);
 }
 
 export function requestPullRequestFileJump(scope: string, path: string): void {

@@ -33,6 +33,7 @@ import {
   type PullRequestDiffFileContentsResult,
   type PullRequestDiffStat,
   type PullRequestDiffInput,
+  type PullRequestRoundSelection,
   type PullRequestChangeBreakdown,
   type PullRequestFilesViewedResult,
   type PullRequestDiffResult,
@@ -129,7 +130,7 @@ const detailTimeToLive = (state: PullRequestState | undefined) =>
 const CHECKS_CACHE_TTL = Duration.seconds(15);
 const REPORTED_STATE_DEDUPE_MS = 5 * 60 * 1_000;
 const DIFF_CACHE_TTL = Duration.seconds(60);
-const COMMIT_DIFF_CACHE_TTL = Duration.minutes(10);
+const PINNED_DIFF_CACHE_TTL = Duration.minutes(10);
 const LIST_STATS_CACHE_TTL = Duration.seconds(60);
 const FILES_VIEWED_CACHE_TTL = Duration.seconds(15);
 const DIFF_STALE_WINDOW = Duration.minutes(10);
@@ -159,6 +160,20 @@ const diffCacheEvictions = (entries: Iterable<readonly [string, PullRequestDiffR
   return evictions;
 };
 const FILES_VIEWED_CACHE_CAPACITY = 128;
+
+/**
+ * A commit or a round names content no push can change, so its diff is keyed and kept apart from
+ * the head's. Normalized so equal selections spell one cache key.
+ */
+const diffPin = (input: {
+  readonly commit?: string | undefined;
+  readonly round?: PullRequestRoundSelection | undefined;
+}): { readonly commit: string } | { readonly round: PullRequestRoundSelection } | null => {
+  if (input.commit !== undefined) return { commit: input.commit };
+  if (input.round === undefined) return null;
+  const { number, since } = input.round;
+  return { round: since === undefined ? { number } : { number, since } };
+};
 const VIEWER_CACHE_CAPACITY = 32;
 
 export type PullRequestError = PullRequestUnavailableError | PullRequestOperationError;
@@ -565,6 +580,7 @@ function withRateLimitBackoff(
           ),
         }),
     getChangeRequestActivity: wrap("getChangeRequestActivity", api.getChangeRequestActivity),
+    ...(api.listRounds === undefined ? {} : { listRounds: wrap("listRounds", api.listRounds) }),
     ...(api.getReviewThreadComments === undefined
       ? {}
       : {
@@ -1846,31 +1862,38 @@ export const make = Effect.gen(function* () {
 
   const activityUncached: PullRequestService["Service"]["activity"] = (input) =>
     requireProject(input).pipe(
-      Effect.flatMap((project) =>
-        project.api
-          .getChangeRequestActivity({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
-            number: input.number,
-          })
-          .pipe(
-            Effect.mapError(toPullRequestError("activity")),
-            Effect.map((activity): PullRequestActivity => ({
-              ...(activity.author === undefined ? {} : { author: activity.author }),
-              ...(activity.reviewers === undefined ? {} : { reviewers: activity.reviewers }),
-              comments: activity.comments,
-              commentCount: activity.commentCount,
-              commentsTruncated: activity.commentsTruncated,
-              ...(activity.reviewThreadsTruncated === undefined
-                ? {}
-                : { reviewThreadsTruncated: activity.reviewThreadsTruncated }),
-              reviewThreads: activity.reviewThreads,
-              commits: activity.commits,
-              ...(activity.reactions === undefined ? {} : { reactions: activity.reactions }),
-            })),
-          ),
-      ),
+      Effect.flatMap((project) => {
+        const ref = {
+          cwd: project.project.workspaceRoot,
+          repository: project.repository,
+          host: project.host,
+          number: input.number,
+        };
+        const listRounds = project.api.listRounds;
+        return Effect.all(
+          [
+            project.api.getChangeRequestActivity(ref),
+            listRounds === undefined ? Effect.void : listRounds(ref),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.mapError(toPullRequestError("activity")),
+          Effect.map(([activity, rounds]): PullRequestActivity => ({
+            ...(activity.author === undefined ? {} : { author: activity.author }),
+            ...(activity.reviewers === undefined ? {} : { reviewers: activity.reviewers }),
+            comments: activity.comments,
+            commentCount: activity.commentCount,
+            commentsTruncated: activity.commentsTruncated,
+            ...(activity.reviewThreadsTruncated === undefined
+              ? {}
+              : { reviewThreadsTruncated: activity.reviewThreadsTruncated }),
+            reviewThreads: activity.reviewThreads,
+            commits: activity.commits,
+            ...(rounds === undefined ? {} : { rounds }),
+            ...(activity.reactions === undefined ? {} : { reactions: activity.reactions }),
+          })),
+        );
+      }),
     );
 
   const threadComments: PullRequestService["Service"]["threadComments"] = (input) =>
@@ -1898,10 +1921,25 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // A host that keeps no rounds would ignore one and answer with the whole change instead.
+  const roundsRefused = (
+    project: SupportedProject,
+    input: { readonly round?: PullRequestRoundSelection | undefined },
+    operation: string,
+  ) =>
+    input.round !== undefined && project.api.capabilities.rounds !== true
+      ? new PullRequestOperationError({
+          operation,
+          detail: "This host keeps no rounds for a change request.",
+        })
+      : null;
+
   const diffUncached: PullRequestService["Service"]["diff"] = (input) =>
     requireProject(input).pipe(
-      Effect.flatMap((project) =>
-        project.api.capabilities.diff
+      Effect.flatMap((project) => {
+        const refused = roundsRefused(project, input, "diff");
+        if (refused !== null) return Effect.fail(refused);
+        return project.api.capabilities.diff
           ? project.api
               .getDiff({
                 cwd: project.project.workspaceRoot,
@@ -1909,7 +1947,7 @@ export const make = Effect.gen(function* () {
                 host: project.host,
                 number: input.number,
                 ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-                ...(input.commit === undefined ? {} : { commit: input.commit }),
+                ...diffPin(input),
               })
               .pipe(Effect.mapError(toPullRequestError("diff")))
           : Effect.fail(
@@ -1917,13 +1955,15 @@ export const make = Effect.gen(function* () {
                 operation: "diff",
                 detail: "This host cannot provide a diff for a change request.",
               }),
-            ),
-      ),
+            );
+      }),
     );
 
   const readDiffFileContents: PullRequestService["Service"]["diffFileContents"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) => {
+        const refused = roundsRefused(project, input, "diffFileContents");
+        if (refused !== null) return Effect.fail(refused);
         const read = project.api.getDiffFileContents;
         return project.api.capabilities.diff && read
           ? read({
@@ -1931,7 +1971,7 @@ export const make = Effect.gen(function* () {
               repository: project.repository,
               host: project.host,
               number: input.number,
-              ...(input.commit === undefined ? {} : { commit: input.commit }),
+              ...diffPin(input),
               changeType: input.changeType,
               oldPath: input.oldPath,
               newPath: input.newPath,
@@ -3315,16 +3355,20 @@ export const make = Effect.gen(function* () {
 
   const diffCache = yield* Cache.makeWith(
     (key: string) => {
-      const [reference, cursor, commit] = JSON.parse(key) as [string, string | null, string | null];
+      const [reference, cursor, pin] = JSON.parse(key) as [
+        string,
+        string | null,
+        ReturnType<typeof diffPin>,
+      ];
       return diffUncached({
         ...refOfCacheKey(reference),
         ...(cursor === null ? {} : { cursor }),
-        ...(commit === null ? {} : { commit }),
+        ...pin,
       } as PullRequestDiffInput).pipe(
         observeRead,
         Effect.tap(({ value, observedAt }) => {
           // Keep the loader's epoch and read time if a refresh occurs during the provider read.
-          diffFiles.record(JSON.stringify([reference, cursor, commit]), value, observedAt);
+          diffFiles.record(JSON.stringify([reference, cursor, pin]), value, observedAt);
           return Effect.void;
         }),
       );
@@ -3333,8 +3377,8 @@ export const make = Effect.gen(function* () {
       capacity: DIFF_CACHE_CAPACITY,
       timeToLive: (exit, key) => {
         if (!Exit.isSuccess(exit)) return Duration.zero;
-        const commit = (JSON.parse(key) as ReadonlyArray<unknown>)[2];
-        const ttl = Duration.toMillis(commit === null ? DIFF_CACHE_TTL : COMMIT_DIFF_CACHE_TTL);
+        const pin = (JSON.parse(key) as ReadonlyArray<unknown>)[2];
+        const ttl = Duration.toMillis(pin === null ? DIFF_CACHE_TTL : PINNED_DIFF_CACHE_TTL);
         return Duration.millis(
           Math.max(0, exit.value.observedAt + ttl - clock.currentTimeMillisUnsafe()),
         );
@@ -3364,13 +3408,12 @@ export const make = Effect.gen(function* () {
     }),
   );
   const readDiff = (input: PullRequestDiffInput) => {
+    const pin = diffPin(input);
     const key = JSON.stringify([
       refCacheKey(input),
       input.cursor ?? null,
-      input.commit ?? null,
-      input.commit === undefined
-        ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
-        : null,
+      pin,
+      pin === null ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null) : null,
     ]);
     const evictDiffs = Cache.entries(diffCache).pipe(
       Effect.flatMap((entries) =>
@@ -3612,7 +3655,7 @@ export const make = Effect.gen(function* () {
     const ttlMs = Duration.toMillis(DIFF_CACHE_TTL);
     const fileKey = (oldPath: string, newPath: string) => JSON.stringify([oldPath, newPath]);
     const sliceKey = (input: PullRequestDiffInput) =>
-      JSON.stringify([refCacheKey(input), input.cursor ?? null, input.commit ?? null]);
+      JSON.stringify([refCacheKey(input), input.cursor ?? null, diffPin(input)]);
     const recordPaths = (key: string, slice: ProviderDiffFilePaths, at: number) => {
       const entry = {
         at,
@@ -3653,7 +3696,7 @@ export const make = Effect.gen(function* () {
             host: project.host,
             number: input.number,
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-            ...(input.commit === undefined ? {} : { commit: input.commit }),
+            ...diffPin(input),
           })
           .pipe(Effect.mapError(toPullRequestError("diffFileContents")));
         return recordPaths(key, slice, now);
@@ -3670,7 +3713,6 @@ export const make = Effect.gen(function* () {
         .read({
           ...input,
           ...(cursor === undefined ? {} : { cursor }),
-          ...(input.commit === undefined ? {} : { commit: input.commit }),
         })
         .pipe(
           Effect.flatMap((slice) =>
