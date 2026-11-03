@@ -5,6 +5,7 @@ import {
   type PullRequestCheck,
   type PullRequestChecksState,
   type PullRequestCheckStatus,
+  type PullRequestRoundSelection,
   type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 import { dedupeChecks, sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
@@ -24,6 +25,7 @@ import * as TangledApi from "./TangledApi.ts";
 import { TangledAuth, type TangledAuthError } from "./TangledAuth.ts";
 import { pullRequestUrl, ticketNumber } from "./TangledSourceControlProvider.ts";
 import * as TangledPatch from "./tangledPatch.ts";
+import * as TangledRound from "./tangledRound.ts";
 
 const KIND = SourceControlProviderKind.make("tangled");
 
@@ -41,6 +43,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
   reviewers: { request: false, listCandidates: false },
   edit: { changeRequest: true, comment: false },
+  rounds: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {
@@ -239,6 +242,7 @@ export const make = Effect.gen(function* () {
   const permissionsFor = Effect.fn("TangledPullRequestProvider.permissionsFor")(function* (
     repository: TangledApi.TangledRepository,
     ticket: TangledApi.TangledTicket,
+    round: TangledApi.TangledRound,
   ) {
     const viewer = Option.getOrNull(yield* auth.viewer);
     if (viewer === null) return NO_PERMISSIONS;
@@ -246,10 +250,21 @@ export const make = Effect.gen(function* () {
       .listMaintainers(repository)
       .pipe(Effect.orElseSucceed((): ReadonlySet<string> => new Set([repository.ownerDid])));
     const maintainer = maintainers.has(viewer.did);
-    const steward = maintainer || ticket.authorDid === viewer.did;
+    const author = ticket.authorDid === viewer.did;
+    const steward = maintainer || author;
+    // Tangled's web offers Resubmit to the author once the branch has moved past the latest round.
+    const branchTip =
+      author && ticket.state === "open" && round.sourceBranch !== null
+        ? yield* api
+            .getRef({ repoDid: round.sourceRepoDid, ref: `refs/heads/${round.sourceBranch}` })
+            .pipe(Effect.orElseSucceed(() => null))
+        : null;
+    const resubmittable = branchTip !== null && branchTip !== round.headOid;
     return {
       ...NO_PERMISSIONS,
-      actions: CAPABILITIES.actions.filter((action) => (action === "merge" ? maintainer : steward)),
+      actions: CAPABILITIES.actions.filter((action) =>
+        action === "merge" ? maintainer : action === "resubmit" ? resubmittable : steward,
+      ),
       comment: true,
       editChangeRequest: steward,
     } satisfies PullRequestViewerPermissions;
@@ -288,6 +303,39 @@ export const make = Effect.gen(function* () {
       headRepoDid: round.sourceRepoDid,
       head: commit,
     };
+  });
+
+  /**
+   * What a diff read shows: the latest round, one commit of it, one earlier round, or what changed
+   * since an earlier round. Rounds are read through Tangled, which keeps heads a force-push dropped.
+   */
+  const comparisonFor = Effect.fn("TangledPullRequestProvider.comparisonFor")(function* (
+    operation: string,
+    input: PullRef & {
+      readonly commit?: string | undefined;
+      readonly round?: PullRequestRoundSelection | undefined;
+    },
+  ) {
+    const { repository, rounds, round } = yield* loadPull(operation, input);
+    const range = (range: TangledPatch.TangledRange): TangledPatch.TangledComparison => ({
+      kind: "range",
+      range,
+    });
+    if (input.commit !== undefined)
+      return range(yield* commitRange(operation, round, input.commit));
+    if (input.round === undefined) return range(rangeOf(repository, round));
+    const roundAt = (number: number) =>
+      Effect.fromNullishOr(rounds[number - 1]).pipe(
+        Effect.mapError(() =>
+          failure(operation, `Pull request #${input.number} has no round ${number}.`, "not-found"),
+        ),
+      );
+    const to = yield* roundAt(input.round.number);
+    if (input.round.since === undefined) return range(rangeOf(repository, to));
+    // Tangled's interdiff, not head..head: a round rebased onto a newer target would otherwise
+    // show every commit the target gained in between.
+    const from = yield* roundAt(input.round.since);
+    return { kind: "interdiff", from, to } satisfies TangledPatch.TangledComparison;
   });
 
   /** Reads the knot's copy and writes it back over exactly that version. */
@@ -417,6 +465,29 @@ export const make = Effect.gen(function* () {
     yield* complete(operation, repository, ticket.rkey);
   });
 
+  /** The source branch's tip as the next round; nothing when the latest round already has it. */
+  const resubmit = Effect.fn("TangledPullRequestProvider.resubmit")(function* (ref: PullRef) {
+    const operation = "resubmit";
+    const { repository, ticket, round } = yield* loadPull(operation, ref);
+    if (ticket.state !== "open")
+      return yield* failure(operation, "Only an open pull request can be resubmitted.");
+    if (round.sourceBranch === null)
+      return yield* failure(operation, "The pull request names no source branch.");
+    const source = {
+      target: repository,
+      targetBranch: ticket.targetBranch,
+      sourceRepoDid: round.sourceRepoDid,
+      sourceBranch: round.sourceBranch,
+    };
+    const next = yield* TangledRound.proposeRound(api, source).pipe(
+      Effect.mapError(fail(operation)),
+    );
+    if (next.head === round.headOid) return;
+    yield* TangledRound.submitRound(api, { ...source, ...next, ticketUri: ticket.uri }).pipe(
+      Effect.mapError(fail(operation)),
+    );
+  });
+
   const provider: PullRequestProviderApi = {
     kind: KIND,
     capabilities: CAPABILITIES,
@@ -496,7 +567,7 @@ export const make = Effect.gen(function* () {
               headCommit: round.headOid,
             })
             .pipe(Effect.option),
-          permissionsFor(repository, ticket),
+          permissionsFor(repository, ticket, round),
           ticket.state !== "open"
             ? Effect.succeed("unknown" as const)
             : api
@@ -613,44 +684,37 @@ export const make = Effect.gen(function* () {
       },
     ),
 
+    listRounds: Effect.fn("TangledPullRequestProvider.listRounds")(function* (input) {
+      const { rounds } = yield* loadPull("listRounds", input);
+      return rounds.map((round) => ({
+        number: round.round,
+        headSha: round.headOid,
+        baseSha: round.baseOid,
+        createdAt: iso(round.createdAt),
+      }));
+    }),
+
     getViewerPermissions: Effect.fn("TangledPullRequestProvider.getViewerPermissions")(
       function* (input) {
-        const operation = "getViewerPermissions";
-        const repository = yield* repositoryOf(operation, input);
-        const ticket = yield* api
-          .getTicket({ repoDid: repository.repoDid, rkey: String(input.number) })
-          .pipe(Effect.mapError(fail(operation)));
-        return yield* permissionsFor(repository, ticket);
+        const { repository, ticket, round } = yield* loadPull("getViewerPermissions", input);
+        return yield* permissionsFor(repository, ticket, round);
       },
     ),
 
     getDiff: Effect.fn("TangledPullRequestProvider.getDiff")(function* (input) {
       const operation = "getDiff";
-      const { repository, round } = yield* loadPull(operation, input);
-      const range =
-        input.commit === undefined
-          ? rangeOf(repository, round)
-          : yield* commitRange(operation, round, input.commit);
-      return yield* TangledPatch.readPatchSlice(api, range, input.cursor).pipe(
+      const comparison = yield* comparisonFor(operation, input);
+      return yield* TangledPatch.readPatchSlice(api, comparison, input.cursor).pipe(
         Effect.mapError(fail(operation)),
       );
     }),
 
     getDiffFilePaths: Effect.fn("TangledPullRequestProvider.getDiffFilePaths")(function* (input) {
       const operation = "getDiffFilePaths";
-      const { repository, round } = yield* loadPull(operation, input);
-      const range =
-        input.commit === undefined
-          ? rangeOf(repository, round)
-          : yield* commitRange(operation, round, input.commit);
-      const files = yield* api
-        .getDiff({
-          baseRepoDid: range.baseRepoDid,
-          baseCommit: range.base,
-          headRepoDid: range.headRepoDid,
-          headCommit: range.head,
-        })
-        .pipe(Effect.mapError(fail(operation)));
+      const comparison = yield* comparisonFor(operation, input);
+      const files = yield* TangledPatch.listFiles(api, comparison).pipe(
+        Effect.mapError(fail(operation)),
+      );
       return {
         files: files.map((file) => ({ oldPath: file.lhsSrc.path, newPath: file.rhsSrc.path })),
         nextCursor: null,
@@ -660,12 +724,8 @@ export const make = Effect.gen(function* () {
     getDiffFileContents: Effect.fn("TangledPullRequestProvider.getDiffFileContents")(
       function* (input) {
         const operation = "getDiffFileContents";
-        const { repository, round } = yield* loadPull(operation, input);
-        const range =
-          input.commit === undefined
-            ? rangeOf(repository, round)
-            : yield* commitRange(operation, round, input.commit);
-        const contents = yield* TangledPatch.readFileContents(api, range, {
+        const comparison = yield* comparisonFor(operation, input);
+        const contents = yield* TangledPatch.readFileContents(api, comparison, {
           oldPath: input.oldPath,
           newPath: input.newPath,
           change:
@@ -705,6 +765,7 @@ export const make = Effect.gen(function* () {
           return yield* failure(operation, "Tangled merges by rebase only.");
         return yield* merge(input);
       }
+      if (input.action === "resubmit") return yield* resubmit(input);
       if (input.action !== "close" && input.action !== "reopen")
         return yield* failure(operation, `Tangled pull requests cannot ${input.action}.`);
       const repository = yield* repositoryOf(operation, input);

@@ -2,10 +2,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as TangledApi from "./TangledApi.ts";
-import { TangledAuth, type TangledViewer } from "./TangledAuth.ts";
+import { TangledAuth, TangledAuthError, type TangledViewer } from "./TangledAuth.ts";
+
+export const FAKE_PDS = "pds.test";
 
 export interface RecordedRequest {
   readonly method: string;
@@ -73,6 +76,31 @@ export function fakeTangled(
     );
   });
   const viewer = options.viewer === undefined ? KAEDEN : options.viewer;
+  /** The viewer's PDS answers from the same routes, on host `pds.test`. */
+  const pds = (method: "GET" | "POST", path: string, body?: unknown) =>
+    client
+      .execute(
+        body === undefined
+          ? HttpClientRequest.get(`https://${FAKE_PDS}/xrpc/${path}`)
+          : HttpClientRequest.post(`https://${FAKE_PDS}/xrpc/${path}`).pipe(
+              HttpClientRequest.bodyJsonUnsafe(body),
+            ),
+      )
+      .pipe(
+        Effect.flatMap((response) =>
+          response.json.pipe(
+            Effect.map((json) => {
+              const fields = json as { uri: string; cid: string; message?: string };
+              return {
+                ok: response.status < 300,
+                ref: { uri: fields.uri, cid: fields.cid },
+                detail: fields.message ?? `HTTP ${response.status}`,
+              };
+            }),
+          ),
+        ),
+        Effect.orDie,
+      );
   const auth = Layer.succeed(
     TangledAuth,
     TangledAuth.of({
@@ -83,6 +111,20 @@ export function fakeTangled(
           return `token:${input.lxm}`;
         }),
       ),
+      getRecord: Effect.fn("FakeTangledAuth.getRecord")(function* (input) {
+        const query = new URLSearchParams({ repo: viewer?.did ?? "", ...input });
+        const reply = yield* pds("GET", `com.atproto.repo.getRecord?${query}`);
+        return reply.ok ? Option.some(reply.ref) : Option.none();
+      }),
+      createRecord: Effect.fn("FakeTangledAuth.createRecord")(function* (input) {
+        const reply = yield* pds("POST", "com.atproto.repo.createRecord", {
+          repo: viewer?.did ?? "",
+          ...input,
+        });
+        if (!reply.ok)
+          return yield* new TangledAuthError({ reason: "failed", detail: reply.detail });
+        return reply.ref;
+      }),
       signIn: {
         start: () => Effect.die("unused"),
         wait: () => Effect.die("unused"),

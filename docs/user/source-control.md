@@ -139,12 +139,22 @@ pull requests need one. Pushing goes over SSH, so add an SSH key to your Tangled
 T3 Code knows a Tangled repository by its own identity rather than its name, so renaming the
 repository or changing your handle keeps its project, threads and pull requests together.
 
+Tangled keeps each submission of a pull request as a [round](#review-a-change-round-by-round), and
+pushing to its branch does not make a new one by itself. When T3 Code pushes a branch with your
+open pull request, it submits the new commits as the next round, so a stack of Jujutsu changes on
+one bookmark stays one pull request that grows round by round. If that fails, the push still
+stands and its notice says why. After pushing from elsewhere, choose **Resubmit** from the pull
+request's menu, or its status menu on mobile.
+
 Tangled merges by rebasing onto the target branch, so that is the only merge method offered. Tangled
 has no draft pull requests, requested reviewers, review approvals or line comments; comments on a
 pull request apply to the whole pull request. Checks come from the repository's spindle. A run for
 a pull request from someone outside the repository waits until a collaborator approves it on
-Tangled. Creating a Tangled repository from T3 Code is not available yet: create it on tangled.org,
-then add it by its URL.
+Tangled.
+
+Publishing a project to Tangled creates a public repository in your own account on the default
+knot, `knot1.tangled.sh`. Tangled has no private repositories. To use another knot, create the
+repository on tangled.org, then add it by its URL.
 
 ## Start, clone, or publish a project
 

@@ -46,11 +46,14 @@ export const NSID = {
   submitPatch: "org.tangled.review.submitPatch",
   mergeCommit: "sh.tangled.git.mergeCommit",
   receivePack: "org.tangled.git.receivePack",
+  createRepo: "org.tangled.repo.createRepo",
 } as const;
 
 export const COLLECTION = {
   ticket: "org.tangled.track.ticket",
   comment: "org.tangled.feed.comment",
+  /** On the owner's PDS, keyed by the repository's lowercased name, claiming its repo DID. */
+  declaration: "org.tangled.repo.declaration",
 } as const;
 
 const BOBBIN = "https://api.tangled.org";
@@ -199,6 +202,8 @@ const DiffSide = Schema.Struct({
   size: Schema.Number,
   isBinary: Schema.Boolean,
   isSubmodule: Schema.optional(Schema.Boolean),
+  /** An interdiff's left side is a tree rebased for that one answer, so its text comes inline. */
+  content: Schema.optional(Schema.String),
 });
 const FileDiff = Schema.Struct({
   lhsSrc: DiffSide,
@@ -236,6 +241,7 @@ const RecordView = Schema.Struct({
   value: Schema.Record(Schema.String, Schema.Unknown),
 });
 const Receipt = Schema.Struct({ uri: Schema.String, cid: Schema.String });
+const CreatedRepo = Schema.Struct({ did: Schema.String });
 const XrpcProblem = Schema.Struct({
   error: Schema.optional(Schema.String),
   message: Schema.optional(Schema.String),
@@ -398,12 +404,13 @@ export class TangledApi extends Context.Service<
       readonly headRepoDid: string;
       readonly headCommit: string;
     }) => Effect.Effect<ReadonlyArray<TangledFileDiff>, TangledApiError>;
-    /** What changed between two rounds, as Tangled's own interdiff computes it. */
+    /**
+     * What changed from one round to a later one: `from` rebased onto `to`'s base, against `to`'s
+     * head, so commits the target gained in between do not show.
+     */
     readonly getInterdiff: (input: {
-      readonly baseRepoDid: string;
-      readonly headRepoDid: string;
-      readonly from: Pick<TangledRound, "baseOid" | "headOid">;
-      readonly to: Pick<TangledRound, "baseOid" | "headOid">;
+      readonly from: Pick<TangledRound, "baseOid" | "headOid" | "sourceRepoDid">;
+      readonly to: Pick<TangledRound, "baseOid" | "headOid" | "sourceRepoDid">;
     }) => Effect.Effect<ReadonlyArray<TangledFileDiff>, TangledApiError>;
     readonly mergeCheck: (input: {
       readonly targetRepoDid: string;
@@ -428,6 +435,12 @@ export class TangledApi extends Context.Service<
       { readonly uri: string; readonly cid: string; readonly value: Record<string, unknown> },
       TangledApiError
     >;
+    /** Asks `knot` to host a new repository and mint its DID; the owner still has to claim it. */
+    readonly createRepo: (input: {
+      readonly knot: string;
+      readonly name: string;
+      readonly createdAt: string;
+    }) => Effect.Effect<string, TangledApiError | TangledAuthError>;
     /** A procedure authorized by a service-auth token minted for exactly this call. */
     readonly write: (
       input: TangledWrite,
@@ -461,6 +474,7 @@ const query = (params: Record<string, string | number | ReadonlyArray<string> | 
 
 const decodeProblem = Schema.decodeUnknownOption(Schema.fromJsonString(XrpcProblem));
 const decodeReceipt = Schema.decodeOption(Schema.fromJsonString(Receipt));
+const decodeCreatedRepo = Schema.decodeOption(Schema.fromJsonString(CreatedRepo));
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -699,8 +713,33 @@ export const make = Effect.gen(function* () {
     return text.trim().length === 0 ? null : Option.getOrNull(decodeReceipt(text));
   });
 
+  const createRepo = Effect.fn("TangledApi.createRepo")(function* (input: {
+    readonly knot: string;
+    readonly name: string;
+    readonly createdAt: string;
+  }) {
+    const token = yield* auth.serviceAuth({ aud: serviceDid(input.knot), lxm: NSID.createRepo });
+    const text = yield* send({
+      operation: NSID.createRepo,
+      url: `https://${input.knot}/xrpc/${NSID.createRepo}`,
+      method: "POST",
+      token,
+      body: { name: input.name, createdAt: input.createdAt },
+    });
+    const created = Option.filter(decodeCreatedRepo(text), (repo) => isDid(repo.did));
+    if (Option.isNone(created))
+      return yield* new TangledApiError({
+        operation: NSID.createRepo,
+        status: null,
+        reason: "failed",
+        detail: `${input.knot} did not name the new repository's DID.`,
+      });
+    return created.value.did;
+  });
+
   return TangledApi.of({
     resolveIdentity,
+    createRepo,
     listMaintainers: Effect.fn("TangledApi.listMaintainers")((repository) =>
       Cache.get(maintainers, `${repository.repoDid} ${repository.ownerDid}`),
     ),
@@ -814,12 +853,13 @@ export const make = Effect.gen(function* () {
     getInterdiff: Effect.fn("TangledApi.getInterdiff")((input) =>
       read(
         NSID.getInterdiff,
+        // Named for the two rounds, not two sides: `base*` is the earlier round's range.
         {
-          baseRepo: input.baseRepoDid,
+          baseRepo: input.from.sourceRepoDid,
           baseCommit1: input.from.baseOid,
-          baseCommit2: input.to.baseOid,
-          headRepo: input.headRepoDid,
-          headCommit1: input.from.headOid,
+          baseCommit2: input.from.headOid,
+          headRepo: input.to.sourceRepoDid,
+          headCommit1: input.to.baseOid,
           headCommit2: input.to.headOid,
         },
         Diffs,

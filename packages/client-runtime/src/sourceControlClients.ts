@@ -10,6 +10,7 @@ import { parseGitRemoteRepository } from "@t3tools/shared/git";
 
 export {
   isMonochromeSourceControlIcon,
+  newRepositoryVisibility,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
   type ChangeRequestLink,
   type ChangeRequestTerminology,

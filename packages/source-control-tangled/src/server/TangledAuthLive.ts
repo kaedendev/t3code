@@ -57,7 +57,7 @@ export interface TangledOAuthClient {
   /** Exchanges the relay's callback for a session the client saves, and names its DID. */
   readonly callback: (params: URLSearchParams) => Promise<{ readonly did: string }>;
   /** A request to the PDS of the saved session for `did`, refreshing its tokens as needed. */
-  readonly fetch: (did: string, path: string) => Promise<Response>;
+  readonly fetch: (did: string, path: string, init?: RequestInit) => Promise<Response>;
   /** The handle `did` claims and resolves back to it, or null when it does not. */
   readonly handle: (did: string) => Promise<string | null>;
 }
@@ -243,7 +243,7 @@ const makeNodeClient = Effect.gen(function* () {
         signingIn -= 1;
       }
     },
-    fetch: async (did, path) => (await client.restore(did)).fetchHandler(path),
+    fetch: async (did, path, init) => (await client.restore(did)).fetchHandler(path, init),
     handle: async (did) => {
       const { handle } = await client.identityResolver.resolve(did);
       return handle === "handle.invalid" ? null : handle;
@@ -328,58 +328,111 @@ export const make = Effect.fn("TangledAuth.make")(function* (
     return Option.some({ did: did.value, handle: yield* handleOf(did.value) });
   }).pipe(Effect.withSpan("TangledAuth.viewer"));
 
+  /** An XRPC call to the viewer's PDS as the viewer; a refused session fails as expired. */
+  const pdsCall = Effect.fn("TangledAuth.pdsCall")(function* (
+    nsid: string,
+    request: { readonly query?: Record<string, string>; readonly body?: unknown },
+  ) {
+    const did = yield* storedDid;
+    if (Option.isNone(did)) {
+      return yield* new TangledAuthError({
+        reason: "not-signed-in",
+        detail: "Sign in to Tangled in Settings → Source Control.",
+      });
+    }
+    const oauth = yield* client;
+    const path = `/xrpc/${nsid}${request.query ? `?${new URLSearchParams(request.query)}` : ""}`;
+    const init: RequestInit | undefined =
+      request.body === undefined
+        ? undefined
+        : {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: encodeJson(request.body),
+          };
+    const response = yield* Effect.tryPromise({
+      try: () => oauth.fetch(did.value, path, init),
+      catch: (cause) =>
+        isExpiredSession(cause)
+          ? new TangledAuthError({
+              reason: "expired",
+              detail: "The Tangled sign-in expired. Sign in again in Settings → Source Control.",
+              cause,
+            })
+          : new TangledAuthError({
+              reason: "failed",
+              detail: `Could not reach your PDS: ${errorMessage(cause)}`,
+              cause,
+            }),
+    });
+    const body = yield* Effect.promise(() =>
+      response.json().then(
+        (value: unknown) => value,
+        () => null,
+      ),
+    );
+    if (response.status === 401) {
+      return yield* new TangledAuthError({
+        reason: "expired",
+        detail: "Your PDS no longer accepts the Tangled sign-in. Sign in again.",
+      });
+    }
+    const fields =
+      typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    return { did: did.value, status: response.status, ok: response.ok, fields };
+  });
+
+  const refusal = (
+    what: string,
+    reply: { readonly status: number; readonly fields: Record<string, unknown> },
+  ) => {
+    const reason =
+      typeof reply.fields.message === "string" ? reply.fields.message : reply.fields.error;
+    return new TangledAuthError({
+      reason: "failed",
+      detail: `Your PDS would not ${what} (${reply.status}${
+        typeof reason === "string" ? `: ${reason}` : ""
+      }).`,
+    });
+  };
+
+  const recordRef = (fields: Record<string, unknown>) =>
+    typeof fields.uri === "string" && typeof fields.cid === "string"
+      ? Option.some({ uri: fields.uri, cid: fields.cid })
+      : Option.none();
+
   const serviceAuth: TangledAuth["Service"]["serviceAuth"] = Effect.fn("TangledAuth.serviceAuth")(
     function* ({ aud, lxm }) {
-      const did = yield* storedDid;
-      if (Option.isNone(did)) {
-        return yield* new TangledAuthError({
-          reason: "not-signed-in",
-          detail: "Sign in to Tangled in Settings → Source Control.",
-        });
-      }
-      const oauth = yield* client;
-      const path = `/xrpc/com.atproto.server.getServiceAuth?${new URLSearchParams({ aud, lxm })}`;
-      const response = yield* Effect.tryPromise({
-        try: () => oauth.fetch(did.value, path),
-        catch: (cause) =>
-          isExpiredSession(cause)
-            ? new TangledAuthError({
-                reason: "expired",
-                detail: "The Tangled sign-in expired. Sign in again in Settings → Source Control.",
-                cause,
-              })
-            : new TangledAuthError({
-                reason: "failed",
-                detail: `Could not reach your PDS: ${errorMessage(cause)}`,
-                cause,
-              }),
-      });
-      const body = yield* Effect.promise(() =>
-        response.json().then(
-          (value: unknown) => value,
-          () => null,
-        ),
-      );
-      const fields =
-        typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
-      if (response.status === 401) {
-        return yield* new TangledAuthError({
-          reason: "expired",
-          detail: "Your PDS no longer accepts the Tangled sign-in. Sign in again.",
-        });
-      }
-      if (!response.ok || typeof fields.token !== "string") {
-        const reason = typeof fields.message === "string" ? fields.message : fields.error;
-        return yield* new TangledAuthError({
-          reason: "failed",
-          detail: `Your PDS would not authorize ${lxm} (${response.status}${
-            typeof reason === "string" ? `: ${reason}` : ""
-          }).`,
-        });
-      }
-      return fields.token;
+      const reply = yield* pdsCall("com.atproto.server.getServiceAuth", { query: { aud, lxm } });
+      if (!reply.ok || typeof reply.fields.token !== "string")
+        return yield* refusal(`authorize ${lxm}`, reply);
+      return reply.fields.token;
     },
   );
+
+  const getRecord: TangledAuth["Service"]["getRecord"] = Effect.fn("TangledAuth.getRecord")(
+    function* ({ collection, rkey }) {
+      const did = Option.getOrNull(yield* storedDid) ?? "";
+      const reply = yield* pdsCall("com.atproto.repo.getRecord", {
+        query: { repo: did, collection, rkey },
+      });
+      if (reply.fields.error === "RecordNotFound") return Option.none();
+      if (!reply.ok) return yield* refusal(`read ${collection}/${rkey}`, reply);
+      return recordRef(reply.fields);
+    },
+  );
+
+  const createRecord: TangledAuth["Service"]["createRecord"] = Effect.fn(
+    "TangledAuth.createRecord",
+  )(function* ({ collection, rkey, record }) {
+    const did = Option.getOrNull(yield* storedDid) ?? "";
+    const reply = yield* pdsCall("com.atproto.repo.createRecord", {
+      body: { repo: did, collection, rkey, record },
+    });
+    const written = reply.ok ? recordRef(reply.fields) : Option.none();
+    if (Option.isNone(written)) return yield* refusal(`write ${collection}/${rkey}`, reply);
+    return written.value;
+  });
 
   const relayCallback = (state: string) =>
     httpClient.get(`${RELAY_ORIGIN}/tangled/callback/${state}`).pipe(
@@ -502,6 +555,8 @@ export const make = Effect.fn("TangledAuth.make")(function* (
   return TangledAuth.of({
     viewer,
     serviceAuth,
+    getRecord,
+    createRecord,
     signIn: {
       start,
       wait,

@@ -2,6 +2,12 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { fakeTangled, type FakeRoute, type RecordedRequest } from "./fakeTangled.ts";
+import containerfile from "./fixtures/getBlob-Containerfile.json" with { type: "json" };
+import getInterdiff from "./fixtures/getInterdiff.json" with { type: "json" };
+import getRepoByRepoDid from "./fixtures/getRepoByRepoDid.json" with { type: "json" };
+import getTicketView from "./fixtures/getTicketView-rounds.json" with { type: "json" };
+import listPatches from "./fixtures/listPatches-rounds.json" with { type: "json" };
+import resolveMiniDoc from "./fixtures/resolveMiniDoc.json" with { type: "json" };
 import * as TangledPullRequestProvider from "./TangledPullRequestProvider.ts";
 
 const REPO = "did:plc:mergerepoaaaaaaaaaaaaaaa";
@@ -199,6 +205,204 @@ describe("TangledPullRequestProvider merge", () => {
     return Effect.gen(function* () {
       yield* merge;
       assert.deepStrictEqual(fake.writes(), []);
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
+describe("TangledPullRequestProvider resubmit", () => {
+  const MOVED = "e".repeat(40);
+  const ALICE = { did: OWNER, handle: "alice.tngl.sh" };
+  const ref = { cwd: "/repo", host: "tangled.org", repository: "alice.tngl.sh/project", number: 7 };
+  /** #7 is Alice's; `feature` is at `tip`, and a submitted round shows up in listPatches. */
+  const resubmitRoutes = (tip: string, state = "open") => {
+    let submitted = false;
+    return routes({
+      state,
+      "org.tangled.temp.git.getRef": (request: RecordedRequest) => ({
+        body: { oid: request.params.get("ref") === "refs/heads/feature" ? tip : TIP },
+      }),
+      "org.tangled.temp.git.getMergeBase": { commit: BASE },
+      "org.tangled.temp.review.listPatches": () => ({
+        body: {
+          items: submitted
+            ? [
+                round("bafyround"),
+                {
+                  ...round("bafynext"),
+                  value: { ...round("bafynext").value, head: { oid: MOVED } },
+                },
+              ]
+            : [round("bafyround")],
+        },
+      }),
+      "org.tangled.review.submitPatch": () => {
+        submitted = true;
+        return { body: { uri: `at://${REPO}/org.tangled.review.patch/bafynext`, cid: "bafynext" } };
+      },
+    });
+  };
+  const offered = (fake: ReturnType<typeof fakeTangled>) =>
+    Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      const permissions = yield* provider.getViewerPermissions(ref);
+      return permissions.actions.includes("resubmit");
+    }).pipe(Effect.provide(fake.layer));
+
+  it.effect("is offered to the author of an open pull request whose branch moved on", () =>
+    Effect.gen(function* () {
+      assert.isTrue(yield* offered(fakeTangled(resubmitRoutes(MOVED), { viewer: ALICE })));
+      assert.isFalse(
+        yield* offered(fakeTangled(resubmitRoutes(HEAD), { viewer: ALICE })),
+        "the latest round has the branch's head",
+      );
+      assert.isFalse(
+        yield* offered(fakeTangled(resubmitRoutes(MOVED, "closed"), { viewer: ALICE })),
+        "closed",
+      );
+      assert.isFalse(yield* offered(fakeTangled(resubmitRoutes(MOVED))), "not the author");
+    }),
+  );
+
+  it.effect("submits the branch's head as the next round", () => {
+    const fake = fakeTangled(resubmitRoutes(MOVED), { viewer: ALICE });
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      yield* provider.runAction({ ...ref, action: "resubmit" });
+      assert.deepStrictEqual(
+        fake.writes().map((write) => write.body),
+        [
+          {
+            repo: REPO,
+            patch: {
+              ticket: "7",
+              base: { oid: BASE },
+              head: { oid: MOVED },
+              sourceRepo: REPO,
+              sourceBranch: "feature",
+            },
+          },
+        ],
+      );
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
+// tangled.org/core#4618, from a fork: round 2 amended round 1, round 3 only rebased round 2.
+const CORE = "did:plc:j5hmlfdrwkvtxm7cjmu7j2is";
+const FORK = "did:plc:ueozxjczm32mgsvmfvnbyhyr";
+const [R1, R2, R3] = listPatches.items.map((patch) => patch.value);
+
+const interdiffOf = (from: typeof R1, to: typeof R1) =>
+  [from?.base.oid, from?.head.oid, to?.base.oid, to?.head.oid].join(" ");
+
+const fork = (calls: Array<RecordedRequest>) => ({
+  "blue.microcosm.identity.resolveMiniDoc": resolveMiniDoc,
+  "org.tangled.repo.getRepoByName": getRepoByRepoDid,
+  "org.tangled.track.getTicketView": getTicketView,
+  "org.tangled.temp.review.listPatches": listPatches,
+  "sh.tangled.git.temp2.getDiff": { diffs: [] },
+  // Answers only in the order knotmirror reads: the earlier round's range, then the later one's.
+  "sh.tangled.git.temp2.getInterdiff": (request: RecordedRequest) => {
+    calls.push(request);
+    const asked = ["baseCommit1", "baseCommit2", "headCommit1", "headCommit2"]
+      .map((key) => request.params.get(key))
+      .join(" ");
+    return asked === interdiffOf(R1, R3)
+      ? { body: getInterdiff }
+      : asked === interdiffOf(R2, R3)
+        ? { body: { diffs: [] } }
+        : undefined;
+  },
+  "org.tangled.temp.git.getBlob": (request: RecordedRequest) =>
+    request.params.get("repo") === FORK && request.params.get("ref") === R3?.head.oid
+      ? { body: containerfile.text }
+      : undefined,
+});
+
+const pull = { cwd: "/repo", host: "tangled.org", repository: "tangled.org/core", number: 4618 };
+
+describe("TangledPullRequestProvider rounds", () => {
+  it.effect("lists every round, oldest first", () => {
+    const fake = fakeTangled(fork([]));
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      assert.isTrue(provider.capabilities.rounds);
+      const rounds = yield* provider.listRounds!(pull);
+      assert.deepStrictEqual(
+        rounds.map((round) => [round.number, round.baseSha, round.headSha, round.createdAt]),
+        listPatches.items.map((patch, index) => [
+          index + 1,
+          patch.value.base.oid,
+          patch.value.head.oid,
+          `${patch.value.createdAt.slice(0, -1)}.000Z`,
+        ]),
+      );
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("reads an earlier round as it was submitted, against the target", () => {
+    const fake = fakeTangled(fork([]));
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      yield* provider.getDiffFilePaths!({ ...pull, round: { number: 1 } });
+      const [diff] = fake.calls("sh.tangled.git.temp2.getDiff");
+      assert.deepStrictEqual(
+        ["baseRepo", "baseCommit", "headRepo", "headCommit"].map((key) => diff?.params.get(key)),
+        [CORE, R1?.base.oid, FORK, R1?.head.oid],
+      );
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("shows what changed since a round through Tangled's interdiff", () => {
+    const interdiffs: Array<RecordedRequest> = [];
+    const fake = fakeTangled(fork(interdiffs));
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      const since = { ...pull, round: { number: 3, since: 1 } };
+      const slice = yield* provider.getDiff(since);
+      assert.include(slice.patch, '-CMD ["/etc/knot/config.toml"]');
+      assert.include(slice.patch, '+CMD ["--config", "/etc/knot/config.toml"]');
+      const contents = yield* provider.getDiffFileContents!({
+        ...since,
+        changeType: "change",
+        oldPath: "knot2/Containerfile",
+        newPath: "knot2/Containerfile",
+      });
+      assert.strictEqual(contents.oldContents, getInterdiff.diffs[0]?.lhsSrc.content);
+      assert.strictEqual(contents.newContents, containerfile.text);
+      // Round 3 only rebased round 2, so nothing the target gained since shows as a change.
+      const rebased = yield* provider.getDiffFilePaths!({
+        ...pull,
+        round: { number: 3, since: 2 },
+      });
+      assert.deepStrictEqual(rebased.files, []);
+      assert.deepStrictEqual(
+        interdiffs.map((request) => [
+          request.params.get("baseRepo"),
+          request.params.get("headRepo"),
+        ]),
+        [
+          [FORK, FORK],
+          [FORK, FORK],
+          [FORK, FORK],
+        ],
+      );
+      // The rebased left side exists only inline, so no blob is read for it.
+      assert.deepStrictEqual(
+        fake.calls("org.tangled.temp.git.getBlob").map((request) => request.params.get("ref")),
+        [R3?.head.oid ?? null, R3?.head.oid ?? null],
+      );
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("refuses a round the pull request does not have", () => {
+    const fake = fakeTangled(fork([]));
+    return Effect.gen(function* () {
+      const provider = yield* TangledPullRequestProvider.make;
+      const error = yield* provider
+        .getDiff({ ...pull, round: { number: 4, since: 1 } })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.reason, "not-found");
     }).pipe(Effect.provide(fake.layer));
   });
 });

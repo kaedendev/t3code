@@ -7,6 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { newRepositoryVisibility } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -42,7 +43,7 @@ export function useNewProject() {
         cwd: input.workspaceRoot,
         provider: input.target.definition.kind,
         repository: getNewProjectRepository(input.target, input.workspaceRoot),
-        visibility: "private",
+        visibility: newRepositoryVisibility(input.target.definition),
       },
     });
     if (result._tag === "Failure") {

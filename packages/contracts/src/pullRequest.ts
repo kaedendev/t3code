@@ -69,6 +69,8 @@ export const PullRequestAction = Schema.Literals([
   "disable-auto-merge",
   "revert",
   "approve-workflows",
+  /** Submit the source branch's current head as a new round, for a host that keeps rounds. */
+  "resubmit",
 ]);
 export type PullRequestAction = typeof PullRequestAction.Type;
 

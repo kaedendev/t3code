@@ -1279,6 +1279,7 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   revert: false,
   "delete-branch": false,
   "approve-workflows": true,
+  resubmit: true,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {

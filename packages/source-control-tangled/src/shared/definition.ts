@@ -185,6 +185,7 @@ export const definition = defineSourceControl({
   publishDescription: TANGLED_WEB_HOST,
   publishHost: () => TANGLED_WEB_HOST,
   newRepositoryOwner: (account) => (account ? { owner: account } : null),
+  publicRepositoriesOnly: true,
   // Pushing over HTTPS needs a credential helper minting tokens; SSH needs only a key.
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ repository, number, webUrl }) => {
@@ -199,7 +200,7 @@ export const definition = defineSourceControl({
   commitUrl: (input) => buildCommitUrl({ ...input, host: TANGLED_WEB_HOST }, "commit"),
   parseCommitUrl,
   changeRequestUrlFromReferenceAutolink: () => null,
-  changeRequestActions: new Set(["close", "reopen", "merge"] as const),
+  changeRequestActions: new Set(["close", "reopen", "merge", "resubmit"] as const),
   checkoutCommand: ({ number }) => `tg pr checkout ${number}`,
   changeRequestCloseCommand: /\btg\s+pr\s+(?:merge|close)\b/u,
   changeRequestCreateCommand: /\btg\s+pr\s+create\b/u,

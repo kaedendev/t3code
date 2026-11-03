@@ -10,6 +10,11 @@ export interface TangledViewer {
   readonly handle: string;
 }
 
+export interface TangledRecordRef {
+  readonly uri: string;
+  readonly cid: string;
+}
+
 export class TangledAuthError extends Schema.TaggedError<TangledAuthError>()("TangledAuthError", {
   reason: Schema.Literals(["not-signed-in", "expired", "denied", "failed"]),
   detail: Schema.String,
@@ -18,7 +23,9 @@ export class TangledAuthError extends Schema.TaggedError<TangledAuthError>()("Ta
 
 /**
  * The server's Tangled sign-in: atproto OAuth through the relay in `infra/tangled-oauth`. Reads
- * need none of this; every write is authorized by a short-lived service-auth token minted here.
+ * need none of this. Writes to a repository are authorized by a short-lived service-auth token
+ * minted here; the one record the viewer's own PDS holds, a repository's declaration, is written
+ * here directly.
  */
 export class TangledAuth extends Context.Service<
   TangledAuth,
@@ -32,6 +39,17 @@ export class TangledAuth extends Context.Service<
       readonly aud: string;
       readonly lxm: string;
     }) => Effect.Effect<string, TangledAuthError>;
+    /** A record in the viewer's own PDS repository; none when it does not exist. */
+    readonly getRecord: (input: {
+      readonly collection: string;
+      readonly rkey: string;
+    }) => Effect.Effect<Option.Option<TangledRecordRef>, TangledAuthError>;
+    /** Writes a record to the viewer's own PDS repository, in a collection the sign-in covers. */
+    readonly createRecord: (input: {
+      readonly collection: string;
+      readonly rkey: string;
+      readonly record: Record<string, unknown>;
+    }) => Effect.Effect<TangledRecordRef, TangledAuthError>;
     readonly signIn: SourceControlSignIn;
   }
 >()("@t3tools/source-control-tangled/server/TangledAuth") {}

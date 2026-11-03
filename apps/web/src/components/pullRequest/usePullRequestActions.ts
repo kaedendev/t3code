@@ -87,6 +87,7 @@ const actionSuccessLabels = (term: string): Record<PullRequestAction, string> =>
   revert: `Revert ${term} opened`,
   "delete-branch": "Branch deleted",
   "approve-workflows": "Workflows approved",
+  resubmit: "Resubmitted as a new round",
 });
 
 const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
@@ -101,6 +102,7 @@ const actionFailureLabels = (term: string): Record<PullRequestAction, string> =>
   revert: `Could not open a revert ${term}`,
   "delete-branch": "Could not delete this branch",
   "approve-workflows": "Could not approve workflows",
+  resubmit: `Could not resubmit this ${term}`,
 });
 
 const actionFailureHints = (term: string): Record<PullRequestAction, string> => ({
@@ -121,6 +123,7 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
     "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
   "approve-workflows":
     "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
+  resubmit: `The host refused it. Check that you opened this ${term} and that its branch has commits the latest round lacks.`,
 });
 
 export function usePullRequestActionRunner({
