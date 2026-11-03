@@ -51,7 +51,7 @@ const make = Effect.gen(function* () {
 
   return SourceControlSignIn.of({
     start: Effect.fn("SourceControlSignIn.start")(function* (input) {
-      return yield* (yield* signInFor(input)).start(input.host);
+      return yield* (yield* signInFor(input)).start(input.host, input.account);
     }),
     wait: Effect.fn("SourceControlSignIn.wait")(function* (input) {
       return yield* (yield* signInFor(input)).wait(input.host);

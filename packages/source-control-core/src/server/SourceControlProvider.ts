@@ -168,6 +168,15 @@ export class SourceControlProvider extends Context.Service<
       readonly branch: string;
       readonly baseBranch: string;
     }) => Effect.Effect<void>;
+    /**
+     * Told after T3 pushes `branch` at `headSha`, for a host whose change requests do not follow
+     * their branch, as Tangled adds a round only when asked. The push stands whatever this does.
+     */
+    readonly branchPushed?: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly headSha: string;
+    }) => Effect.Effect<void, SourceControlProviderError>;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

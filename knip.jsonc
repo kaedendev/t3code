@@ -148,6 +148,12 @@
         "src/preload.mjs",
       ],
     },
+    "infra/tangled-oauth": {
+      // Alchemy loads src/worker.ts as the Worker entry; keygen runs by hand before a first deploy.
+      "entry": ["alchemy.run.ts!", "src/worker.ts!", "scripts/keygen.ts"],
+      // Loaded through tsconfig "types", which knip only reads with typescript installed.
+      "ignoreDependencies": ["@cloudflare/workers-types"],
+    },
     "infra/relay": {
       // Alchemy loads src/worker.ts as the Worker entry and reads its default export.
       "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!", "src/worker.ts!"],

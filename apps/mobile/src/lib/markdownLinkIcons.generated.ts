@@ -8,4 +8,5 @@ export const SOURCE_CONTROL_LINK_ICON_SOURCES: Readonly<Record<string, ImageSour
   gitcafe: require("../../assets/link-icons/gitcafe.png"),
   github: require("../../assets/link-icons/github.png"),
   gitlab: require("../../assets/link-icons/gitlab.png"),
+  tangled: require("../../assets/link-icons/tangled.png"),
 };

@@ -1,26 +1,31 @@
-# The kaedendev jj fork
+# The kaedendev fork
 
-This fork is T3 Code's latest upstream **stable** release plus Jujutsu (jj) support. It has its own release channel, and its servers and desktop apps update only from `kaedendev/t3code`.
+This fork is T3 Code's latest upstream **stable** release plus Jujutsu (jj) support and a Tangled integration. It has its own release channel, and its servers and desktop apps update only from `kaedendev/t3code`.
 
 ## What the fork carries
 
-`jj/stable` is an upstream stable tag (`vX.Y.Z` on `pingdotgg/t3code`) with a short stack of fork commits on top. List the stack with:
+`kaeden/stable` is an upstream stable tag (`vX.Y.Z` on `pingdotgg/t3code`) with a short stack of fork commits on top. List the stack with:
 
 ```sh
-git log --oneline $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' jj/stable)..jj/stable
+git log --oneline $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' kaeden/stable)..kaeden/stable
 ```
 
-The stack has two parts:
+The stack has three parts:
 
 - **jj support.** It is a port of the community jj stack, upstream PRs #20749 to #20756, which upstream closed unmerged for lack of maintainer approval.
   - Colocated jj repos (`.jj` next to `.git`) use jj for checkpoints, diffs, status, workspaces, commit, push, and pull requests.
   - jj needs version 0.46.0 or newer on the server's `PATH`. When jj is missing, broken, or too old, the repo falls back to git and shows a notice.
+- **Tangled.** [Tangled](https://tangled.org), the AT Protocol git forge, is a source control host like GitHub. See the Tangled section of `docs/user/source-control.md`.
+  - The code is `packages/source-control-tangled`. It reads Tangled's public index at `api.tangled.org` and writes through the knot with service-auth tokens.
+  - Sign-in is atproto OAuth through a relay Worker at `t3-oauth.kaeden.codes` (`infra/tangled-oauth`). The relay serves the client metadata, signs client assertions with the key in `~/.config/t3-tangled-oauth/signing-key.json` on the devbox, and holds each sign-in callback until the server polls for it. Deploy it with `T3_TANGLED_OAUTH_SIGNING_KEY="$(cat ~/.config/t3-tangled-oauth/signing-key.json)" pnpm exec alchemy deploy --stage prod` from `infra/tangled-oauth`. Losing the key means generating a new one and signing in again.
+  - The relay signs assertions and hands out callbacks without checking the caller. Sessions stay safe, since the PKCE verifier and DPoP key never leave the T3 server, but anyone could run a sign-in under the "T3 Code" client name, and a PDS that blocked that client would block T3's Tangled writes. Closing that needs a shared secret on the relay's assertion and callback routes, and the same secret in every T3 server's settings.
+  - Pull requests have rounds. Pushing a branch with an open Tangled pull request submits a new round, and the review picker shows each round and what changed since an earlier one. The rounds picker works with any host that reports rounds.
 - **Release plumbing.**
   - `CLI_RELEASE_REPOSITORY` points at this fork.
   - `.github/workflows/fork-release.yml` builds releases.
   - `scripts/fork-release-version.ts` numbers them.
 
-Mobile code is unchanged. The App Store app works against a fork server and shows Git wording for jj repos.
+The App Store app works against a fork server. It shows Git wording for jj repos, and it has no Tangled sign-in, round picker or Resubmit action; sign in to Tangled from web or desktop, and the server keeps the session for every client.
 
 ## T3 Connect
 
@@ -29,7 +34,7 @@ Fork builds use upstream's production relay (`relay.t3.codes`) and Clerk app, so
 ## Known limits of jj support
 
 - A stale workspace is reported, not repaired. If you rewrite a thread's change from another workspace, T3 shows "workspace is stale". Run `jj workspace update-stale` in that workspace yourself.
-- Push refuses to rewrite a published bookmark, as git's push does. To overwrite on purpose, run `jj git push` from a terminal.
+- Push rewrites a published bookmark only with newer versions of its own changes, after an amend, squash, describe or rebase under it; the button then reads "Push rewrite". It refuses when the remote holds anything else, such as someone else's commits or a change dropped from the stack, or when the remote moved since jj last fetched. To overwrite on purpose, run `jj git push` from a terminal.
 - T3's status refresh snapshots the working copy. If a refresh lands while a `jj commit` or `jj describe` runs, that command can fail with "Concurrent checkout". The result is a divergent change; files on disk stay intact.
 
 ## Version numbers
@@ -42,12 +47,12 @@ Fork versions sort above every upstream release on the same minor version. Clien
 
 1. Run a draft build:
    ```sh
-   gh workflow run fork-release.yml --repo kaedendev/t3code --ref jj/stable
+   gh workflow run fork-release.yml --repo kaedendev/t3code --ref kaeden/stable
    ```
 2. Check the run's **Verify macOS signature** summary. It must show `Gatekeeper: Notarized Developer ID` and no problems. A publish run fails on any problem.
 3. Publish it:
    ```sh
-   gh workflow run fork-release.yml --repo kaedendev/t3code --ref jj/stable -f publish=true
+   gh workflow run fork-release.yml --repo kaedendev/t3code --ref kaeden/stable -f publish=true
    ```
 
 After a release is published, **Update everything** in a fork client moves the fleet. `t3 update` on a server also installs it. Desktop apps update themselves.
@@ -80,13 +85,13 @@ Do this once per machine. After that, updates come from the fork.
 An agent can run these steps unattended. Every gate must pass before anything ships.
 
 1. Find the newest upstream stable: `gh release view --repo pingdotgg/t3code --json tagName -q .tagName`. Call it `NEW`.
-2. Find the current base: `OLD=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' fork/jj/stable)`. If `NEW` equals `OLD`, stop.
-3. Create a worktree next to the others. Base a branch `jj/stable-$NEW` on `fork/jj/stable`, then run `git rebase --onto $NEW $OLD`.
+2. Find the current base: `OLD=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' fork/kaeden/stable)`. If `NEW` equals `OLD`, stop.
+3. Create a worktree next to the others. Base a branch `kaeden/stable-$NEW` on `fork/kaeden/stable`, then run `git rebase --onto $NEW $OLD`.
 4. Resolve each conflict so both upstream's change and the fork's intent survive. Never revert upstream work to make a hunk apply. Each commit must typecheck on its own.
 5. Find git calls that upstream added between `OLD` and `NEW` in `apps/server/src`, and route them by VCS kind. Record any you leave for later.
 6. Run the gates. All must pass:
    - `vp run check:changed $NEW`
-   - `vp test run apps/server/src/jj apps/server/src/vcs apps/server/src/checkpointing apps/server/src/git scripts/fork-release-version.test.ts`
-7. Push `jj/stable-$NEW` to `fork`. Run a draft build from that branch with `--ref jj/stable-$NEW`.
+   - `vp test run apps/server/src/jj apps/server/src/vcs apps/server/src/checkpointing apps/server/src/git apps/server/src/pullRequest packages/source-control-tangled infra/tangled-oauth scripts/fork-release-version.test.ts`
+7. Push `kaeden/stable-$NEW` to `fork`. Run a draft build from that branch with `--ref kaeden/stable-$NEW`.
 8. Report to the owner: the new base, the conflicts and how each was resolved, the gate results, and the draft release.
-9. When the owner approves, force-move `jj/stable` to the new branch and publish a build from `jj/stable`.
+9. When the owner approves, force-move `kaeden/stable` to the new branch and publish a build from `kaeden/stable`.

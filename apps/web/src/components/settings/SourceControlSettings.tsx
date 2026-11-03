@@ -392,21 +392,23 @@ export function SourceControlSettingsPanel() {
     const definition = sourceControlClients.find(item.kind);
     if (!definition?.settings || environmentId === null) return undefined;
     const { credentials } = definition;
+    const appSignIn =
+      definition.appSignIn && item.appSignIn === true ? (
+        <SourceControlAppSignInSettings
+          key={`sign-in-${environmentId}`}
+          environmentId={environmentId}
+          definition={definition}
+          appSignIn={definition.appSignIn}
+          account={Option.getOrNull(item.auth.account)}
+          onChanged={handleScan}
+        />
+      ) : null;
     if (credentials) {
       return (
         <SettingsSearchTarget id={sourceControlHostSettingsSearchId(item.kind)}>
           <div className="grid gap-6">
-            {credentials.appSignIn && item.appSignIn === true ? (
-              <SourceControlAppSignInSettings
-                key={`sign-in-${environmentId}`}
-                environmentId={environmentId}
-                definition={definition}
-                appSignIn={credentials.appSignIn}
-                account={Option.getOrNull(item.auth.account)}
-                onChanged={handleScan}
-              />
-            ) : null}
-            {credentials.appSignIn && item.appSignIn === true ? (
+            {appSignIn}
+            {appSignIn !== null ? (
               <div className="flex items-center gap-3 text-2xs text-muted-foreground">
                 <span aria-hidden className="h-px flex-1 bg-border" />
                 Or use your own credentials
@@ -434,14 +436,24 @@ export function SourceControlSettingsPanel() {
         </SettingsSearchTarget>
       );
     }
+    const hostSettings = (
+      <SourceControlHostSettings
+        key={environmentId}
+        environmentId={environmentId}
+        definition={{ ...definition, settings: definition.settings }}
+        onSaved={handleScan}
+      />
+    );
     return (
       <SettingsSearchTarget id={sourceControlHostSettingsSearchId(item.kind)}>
-        <SourceControlHostSettings
-          key={environmentId}
-          environmentId={environmentId}
-          definition={{ ...definition, settings: definition.settings }}
-          onSaved={handleScan}
-        />
+        {appSignIn === null ? (
+          hostSettings
+        ) : (
+          <div className="grid gap-6">
+            {appSignIn}
+            {hostSettings}
+          </div>
+        )}
       </SettingsSearchTarget>
     );
   };

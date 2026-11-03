@@ -59,6 +59,16 @@ describe("sourceControlClients.parseChangeRequestUrl", () => {
     expect(kindOf("https://github.com/acme/web/pull/42")).toBe("github");
   });
 
+  it("reads a Tangled pull request before Forgejo claims its /pulls/ route", () => {
+    const url = "https://tangled.org/@Tangled.org/Core/pulls/4669/round/2";
+    expect(parse(url)).toEqual({
+      host: "tangled.org",
+      repository: "tangled.org/core",
+      number: 4669,
+    });
+    expect(kindOf(url)).toBe("tangled");
+  });
+
   it("reads Forgejo URLs even when the hostname contains github", () => {
     expect(parse("https://github.internal/team/repo/pulls/7")).toEqual({
       host: "github.internal",
@@ -276,6 +286,10 @@ describe("sourceControlClients.recognizeRemote", () => {
     expect(kindOfRemote("https://bitbucket.visualstudio.com/p/_git/r")).toBe("azure-devops");
     expect(kindOfRemote("git@git.cafe:pingdotgg/t3code.git")).toBe("gitcafe");
     expect(kindOfRemote("https://origin.cursor.com/acme/web.git")).toBe("cursor-origin");
+    expect(kindOfRemote("git@tangled.org:tangled.org/core")).toBe("tangled");
+    expect(kindOfRemote("https://knot1.tangled.sh/did:plc:j5hmlfdrwkvtxm7cjmu7j2is")).toBe(
+      "tangled",
+    );
   });
 
   it("reads a remote no host claims as an unknown host, and a local path as no host", () => {
@@ -317,6 +331,17 @@ describe("sourceControlClients repository keys", () => {
     ["git@ssh.dev.azure.com:v3/o/p", "ssh.dev.azure.com/v3/o/p"],
     ["ssh.dev.azure.com/v3/o/p/r", "ssh.dev.azure.com/v3/o/p/r"],
     ["C:/repos/project", "c:/repos/project"],
+    ["git@example.com:repo", "git@example.com:repo"],
+    ["git@tangled.org:@Kaeden.codes/T3Code.git", "tangled.org/kaeden.codes/t3code"],
+    ["git@knot1.tangled.sh:kaeden.codes/t3code", "tangled.org/kaeden.codes/t3code"],
+    [
+      "git@tangled.org:did:plc:j5hmlfdrwkvtxm7cjmu7j2is",
+      "tangled.org/did:plc:j5hmlfdrwkvtxm7cjmu7j2is",
+    ],
+    [
+      "ssh://git@knot1.tangled.sh:2222/did:plc:j5hmlfdrwkvtxm7cjmu7j2is",
+      "tangled.org/did:plc:j5hmlfdrwkvtxm7cjmu7j2is",
+    ],
   ])("keys %s as %s", (remote, key) => {
     expect(sourceControlClients.repositoryKeyFromRemote(remote)).toBe(key);
   });

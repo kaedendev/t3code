@@ -449,7 +449,7 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   // The same prefix also reports permission errors, which retrying cannot fix.
   [/could not lock config file .+: File exists/i, "config_locked"],
   [
-    /(?:authentication failed|could not read Username|could not read Password|permission denied \([a-z-]+(?:,[a-z-]+)*\)|permission denied, please try again)/i,
+    /(?:authentication failed|could not read Username|could not read Password|permission denied \([a-z-]+(?:,[a-z-]+)*\)|permission denied, please try again|ssh key doesn't match any key published)/i,
     "authentication_failed",
   ],
   [/host key verification failed/i, "host_key_unverified"],
@@ -501,8 +501,9 @@ const GIT_NOT_A_COMMIT_PATTERN = /^error: .+(?:, not a commit|expected commit ty
 // Exclude `remote:` too, since it prefixes remote hook output as well as server diagnostics.
 const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
 // SSH credential refusals are unprefixed; Git's later generic error would otherwise misclassify them as unreachable.
+// A Tangled knot refuses an unknown key with a line of its own.
 const SSH_TRANSPORT_REFUSAL_PATTERN =
-  /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
+  /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed|ssh key doesn't match any key published/i;
 
 export function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
   const diagnostics = stderr

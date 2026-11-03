@@ -444,6 +444,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
         selectedPublishProvider ??
         sourceControlClients.get(undefined).kind);
   const selectedPublishProviderReadiness = publishProviderReadiness(publishProvider);
+  const publicRepositoriesOnly =
+    sourceControlClients.get(publishProvider).publicRepositoriesOnly === true;
+  const effectivePublishVisibility = publicRepositoriesOnly ? "public" : publishVisibility;
   const publishAccount = publishAccountByProvider.get(publishProvider) ?? null;
   const publishRepositoryPrefill = publishAccount ? `${publishAccount}/` : "";
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
@@ -486,7 +489,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       const result = await publishRepositoryAction.run({
         provider: publishProvider,
         repository: publishRepository.trim(),
-        visibility: publishVisibility,
+        visibility: effectivePublishVisibility,
         remoteName: publishRemoteName.trim() || "origin",
         protocol: publishProtocol,
       });
@@ -668,7 +671,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 Visibility
               </span>
               <RadioGroup
-                value={publishVisibility}
+                value={effectivePublishVisibility}
                 onValueChange={(value) =>
                   setPublishVisibility(value as SourceControlRepositoryVisibility)
                 }
@@ -689,32 +692,37 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     description: "Anyone on the web",
                     Icon: GlobeIcon,
                   },
-                ].map((option) => {
-                  const isSelected = publishVisibility === option.value;
-                  return (
-                    <RadioPrimitive.Root
-                      key={option.value}
-                      value={option.value}
-                      className={cn(
-                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
-                        "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                        isSelected
-                          ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
-                          : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
-                      )}
-                    >
-                      <option.Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-foreground">
-                          {option.label}
+                ]
+                  .filter((option) => !publicRepositoriesOnly || option.value === "public")
+                  .map((option) => {
+                    const isSelected = effectivePublishVisibility === option.value;
+                    return (
+                      <RadioPrimitive.Root
+                        key={option.value}
+                        value={option.value}
+                        className={cn(
+                          "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                          "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                          isSelected
+                            ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                            : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                        )}
+                      >
+                        <option.Icon
+                          className="size-4 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium text-foreground">
+                            {option.label}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {option.description}
+                          </span>
                         </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {option.description}
-                        </span>
-                      </span>
-                    </RadioPrimitive.Root>
-                  );
-                })}
+                      </RadioPrimitive.Root>
+                    );
+                  })}
               </RadioGroup>
             </div>
 

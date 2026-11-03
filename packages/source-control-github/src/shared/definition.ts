@@ -50,6 +50,7 @@ function isRepositoryPath(repository: string): boolean {
 export const APP_SIGN_IN: SourceControlAppSignIn = {
   appName: "T3 Code for GitHub",
   hosts: ["github.com"],
+  summary: "A far higher GitHub API rate limit than a personal token or gh login.",
   installUrl: "https://github.com/apps/t3-code-for-github/installations/new",
   revokeUrl: "https://github.com/settings/apps/authorizations",
 };
@@ -70,8 +71,8 @@ export const definition = defineSourceControl({
     tokenEnvVar: "GH_TOKEN",
     tokenAccess: "read and write access to pull requests and contents",
     newTokenUrl: (host) => `https://${host}/settings/personal-access-tokens/new`,
-    appSignIn: APP_SIGN_IN,
   },
+  appSignIn: APP_SIGN_IN,
   changeRequest: {
     shortLabel: "PR",
     shortLabelWithArticle: "a PR",

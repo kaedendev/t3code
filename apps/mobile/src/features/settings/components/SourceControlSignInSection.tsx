@@ -27,9 +27,7 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
 const openUrl = (url: string) => void Linking.openURL(url).catch(() => undefined);
 
 const appSignInHosts = sourceControlClients.definitions.flatMap((definition) =>
-  definition.credentials?.appSignIn === undefined
-    ? []
-    : [{ definition, appSignIn: definition.credentials.appSignIn }],
+  definition.appSignIn === undefined ? [] : [{ definition, appSignIn: definition.appSignIn }],
 );
 
 /**
@@ -113,34 +111,46 @@ function AppSignInRow(props: {
   // The attempt a pending `wait` belongs to; a cancel or a newer attempt makes its outcome stale.
   const attempt = useRef<SourceControlSignInPrompt | null>(null);
   const input = { provider: definition.kind, host };
+  const { label } = definition;
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: `sign out of ${appSignIn.appName}`,
   });
   const [pending, setPending] = useState<SourceControlSignInPrompt | "starting" | null>(null);
 
-  const showCode = (prompt: SourceControlSignInPrompt) => {
-    void Clipboard.setStringAsync(prompt.userCode).catch(() => undefined);
+  const cancelButton = {
+    text: "Cancel",
+    style: "cancel" as const,
+    onPress: () => {
+      attempt.current = null;
+      setPending(null);
+      void cancel({ environmentId, input });
+    },
+  };
+
+  const showPrompt = (prompt: SourceControlSignInPrompt) => {
+    const { userCode } = prompt;
+    if (userCode === undefined) {
+      Dialog.alert(
+        "Waiting for approval",
+        `Approve ${appSignIn.appName} in your browser. The server finishes signing in even if you leave the app.`,
+        [cancelButton, { text: "Open again", onPress: () => openUrl(prompt.verificationUri) }],
+      );
+      return;
+    }
+    void Clipboard.setStringAsync(userCode).catch(() => undefined);
     Dialog.alert(
-      prompt.userCode,
-      `Enter this code on GitHub, then approve ${appSignIn.appName}. It is copied. The server finishes signing in even if you leave the app.`,
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-          onPress: () => {
-            attempt.current = null;
-            setPending(null);
-            void cancel({ environmentId, input });
-          },
-        },
-        { text: "Open GitHub", onPress: () => openUrl(prompt.verificationUri) },
-      ],
+      userCode,
+      `Enter this code on ${label}, then approve ${appSignIn.appName}. It is copied. The server finishes signing in even if you leave the app.`,
+      [cancelButton, { text: `Open ${label}`, onPress: () => openUrl(prompt.verificationUri) }],
     );
   };
 
-  const signIn = async () => {
+  const signIn = async (account?: string) => {
     setPending("starting");
-    const started = await start({ environmentId, input });
+    const started = await start({
+      environmentId,
+      input: { ...input, ...(account !== undefined && { account }) },
+    });
     if (started._tag !== "Success") {
       setPending(null);
       Dialog.alert("Could not start the sign-in", failureMessage(started.cause));
@@ -149,7 +159,8 @@ function AppSignInRow(props: {
     const prompt = started.value;
     attempt.current = prompt;
     setPending(prompt);
-    showCode(prompt);
+    if (prompt.userCode === undefined) openUrl(prompt.verificationUri);
+    else showPrompt(prompt);
     const finished = await wait({ environmentId, input });
     if (attempt.current !== prompt) return;
     attempt.current = null;
@@ -170,19 +181,38 @@ function AppSignInRow(props: {
       },
     });
 
+  const askForAccount = (account: NonNullable<SourceControlAppSignIn["account"]>) =>
+    Dialog.prompt({
+      title: `Sign in to ${label}`,
+      message: account.label,
+      placeholder: account.placeholder,
+      initialValue: "",
+      confirmText: "Continue",
+      onConfirm: (value) => {
+        if (value.trim() !== "") void signIn(value.trim());
+      },
+    });
+
   const onPress = () => {
     if (signedIn) {
+      const { installUrl } = appSignIn;
       Dialog.alert(
         appSignIn.appName,
-        "Signed in. GitHub requests use the app's higher rate limit, in repositories where the app is installed.",
+        installUrl === undefined
+          ? "Signed in."
+          : `Signed in. ${label} requests use the app's higher rate limit, in repositories where the app is installed.`,
         [
-          { text: "Install on an organization", onPress: () => openUrl(appSignIn.installUrl) },
+          ...(installUrl === undefined
+            ? []
+            : [{ text: "Install on an organization", onPress: () => openUrl(installUrl) }]),
           { text: "Sign out", style: "destructive", onPress: signOut },
           { text: "Cancel", style: "cancel" },
         ],
       );
     } else if (pending !== null && pending !== "starting") {
-      showCode(pending);
+      showPrompt(pending);
+    } else if (pending === null && appSignIn.account !== undefined) {
+      askForAccount(appSignIn.account);
     } else if (pending === null) {
       void signIn();
     }
@@ -197,9 +227,11 @@ function AppSignInRow(props: {
           ? "Signed in"
           : pending === "starting"
             ? "Starting…"
-            : pending !== null
-              ? `Enter ${pending.userCode}`
-              : "Sign in"
+            : pending === null
+              ? "Sign in"
+              : pending.userCode === undefined
+                ? "Waiting for approval"
+                : `Enter ${pending.userCode}`
       }
       disabled={props.disabled}
       onPress={onPress}

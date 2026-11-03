@@ -1014,6 +1014,7 @@ function actionArgs(
       return [];
     case "approve-workflows":
     case "delete-branch":
+    case "resubmit":
       throw new Error(`GitLab merge request action ${action} is unsupported`);
   }
 }

@@ -29,11 +29,15 @@ export interface SourceControlMediaRequest {
   readonly repository?: string;
 }
 
-/** The server side of a definition's `credentials.appSignIn`. */
+/** The server side of a definition's `appSignIn`. */
 export interface SourceControlSignIn {
-  /** Replaces any sign-in already pending for `host`; the driver finishes it on its own. */
+  /**
+   * Replaces any sign-in already pending for `host`; the driver finishes it on its own. `account`
+   * is what the user entered when the definition's `appSignIn.account` asks for one.
+   */
   readonly start: (
     host: string,
+    account: string | undefined,
   ) => Effect.Effect<SourceControlSignInPrompt, SourceControlSignInError>;
   /** The outcome of the latest sign-in `start` began for `host`, waiting for it if pending. */
   readonly wait: (

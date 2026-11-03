@@ -43,6 +43,7 @@ const STATUS_ACTIONS: readonly PullRequestAction[] = [
   "close",
   "reopen",
   "revert",
+  "resubmit",
 ];
 const CHECK_PRIORITY = {
   failure: 0,

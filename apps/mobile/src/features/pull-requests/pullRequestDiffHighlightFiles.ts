@@ -5,6 +5,7 @@ import {
 import type {
   PullRequestDiffFileContentsInput,
   PullRequestDiffFileContentsResult,
+  PullRequestRoundSelection,
 } from "@t3tools/contracts";
 
 import { createNativeReviewDiffSourceLoader } from "../diffs/nativeReviewDiffSource";
@@ -42,6 +43,7 @@ export function createPullRequestDiffHighlightFiles<E>(
   source: {
     readonly target: ReturnType<typeof pullRequestTarget>;
     readonly commit?: string;
+    readonly round?: PullRequestRoundSelection;
   },
   parsed: ReviewParsedDiff,
   files: ReadonlyArray<NativeReviewDiffFile>,
@@ -50,7 +52,7 @@ export function createPullRequestDiffHighlightFiles<E>(
 ): ReadonlyArray<NativeReviewDiffFile> {
   if (parsed.kind !== "files" || !parsed.files[0]) return files;
   const byId = new Map(parsed.files.map((file) => [file.id, file]));
-  const { target, commit } = source;
+  const { target, commit, round } = source;
   traceDiffHighlight("source-target", {
     environment: diffHighlightTraceHash(target.environmentId),
     project: diffHighlightTraceHash(target.input.projectId),
@@ -64,6 +66,7 @@ export function createPullRequestDiffHighlightFiles<E>(
     target.input.number,
     target.input.host,
     commit,
+    round,
   ]);
   const firstFile = parsed.files[0];
   // Appended pages share one loader budget; a new first file starts a new snapshot.
@@ -99,6 +102,7 @@ export function createPullRequestDiffHighlightFiles<E>(
         input: {
           ...target.input,
           ...(commit ? { commit } : {}),
+          ...(round ? { round } : {}),
           changeType: file.changeType,
           oldPath: file.previousPath ?? file.path,
           newPath: file.path,

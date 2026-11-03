@@ -17,7 +17,7 @@ import {
 import type { JjVcsDriverShape } from "../vcs/JjVcsDriver.ts";
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
 import { jjFailure, mapJjFailure } from "./JjFailure.ts";
-import { resolveWorkspaceRefName, resolveUpstreamContext } from "./JjStatus.ts";
+import { isOwnRewrite, resolveWorkspaceRefName, resolveUpstreamContext } from "./JjStatus.ts";
 import { isT3WorkspaceName } from "./JjWorkspaces.ts";
 
 const FETCH_TIMEOUT_MS = 60_000;
@@ -619,7 +619,15 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
       if (localTarget !== undefined && localTarget !== null && localTarget === remoteTarget) {
         return { status: "skipped_up_to_date" as const, refName: input.name };
       }
-      // `jj git push` moves the remote anywhere, while Git rejects a non-fast-forward push.
+      const rewriteRefusal = new GitCommandError({
+        operation: input.operation,
+        command: "jj",
+        cwd: input.cwd,
+        detail: `${input.name} on ${input.remoteName} has commits your local bookmark doesn't, so pushing would rewrite published history. Pull if they are someone else's work. To replace them, push from a terminal with \`jj git push\`.`,
+        reason: "push_rejected_non_fast_forward",
+      });
+      // `jj git push` moves the remote anywhere, while Git rejects a non-fast-forward push. Only
+      // the user's own amend may replace it; jj's lease refuses a remote that moved since fetch.
       if (
         typeof remoteTarget === "string" &&
         typeof localTarget === "string" &&
@@ -627,15 +635,13 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
           .countRevset(input.cwd, `${remoteTarget} & ::${localTarget}`)
           .pipe(
             mapJjFailure(input.operation, input.cwd, "Could not check the remote bookmark."),
-          )) === 0
+          )) === 0 &&
+        !(yield* isOwnRewrite(process, input.operation, input.cwd, {
+          local: localTarget,
+          remote: remoteTarget,
+        }))
       ) {
-        return yield* new GitCommandError({
-          operation: input.operation,
-          command: "jj",
-          cwd: input.cwd,
-          detail: `${input.name} on ${input.remoteName} has commits your local bookmark doesn't, so pushing would rewrite published history. Pull if they are someone else's work. To replace them, push from a terminal with \`jj git push\`.`,
-          reason: "push_rejected_non_fast_forward",
-        });
+        return yield* rewriteRefusal;
       }
 
       const gitPaths = { gitDir: paths.gitDir, cwd: paths.mainWorkspaceRoot };
@@ -662,6 +668,8 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
       ).pipe(mapJjFailure(input.operation, input.cwd, `Could not push ${input.name}.`));
 
       if (result.exitCode !== 0) {
+        if (result.stderr.includes("unexpectedly moved on the remote"))
+          return yield* rewriteRefusal;
         const stderr = boundedStderr(result.stderr);
         // `--allow-empty-description` is never passed on the user's behalf: an undescribed commit
         // reaching a remote is a decision, not a default.
@@ -678,7 +686,7 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
         // jj's local validation (description/conflicts/etc.) remains actionable. Only a failure
         // after transport began may be replaced with bounded hosting-specific guidance.
         const transportFailed =
-          /Failed to push|remote:|remote rejected|failed to connect|authentication failed|permission denied|could not resolve host/i.test(
+          /Failed to push|remote:|remote rejected|failed to connect|authentication failed|permission denied|could not resolve host|remote end hung up|ssh key doesn't match/i.test(
             result.stderr,
           );
         return yield* input.pushFailureDetail !== undefined && transportFailed
@@ -762,33 +770,15 @@ export const makeJjRemotes = (deps: JjRemoteOpsDeps): JjRemoteOps => {
     }
 
     if (counts.aheadCount > 0) {
-      const remoteTarget = yield* driver
-        .changeAt(cwd, remoteRevset)
-        .pipe(mapJjFailure(operation, cwd, "Could not read the remote bookmark target."));
-      const evolution = yield* run(
-        operation,
-        cwd,
-        [
-          "evolog",
-          "--no-graph",
-          "-r",
-          beforeFetch.commitId,
-          "-T",
-          'self.commit().commit_id() ++ " " ++ self.commit().change_id() ++ "\\n"',
-        ],
-        { timeoutMs: 20_000, ignoreWorkingCopy: true },
-      ).pipe(mapJjFailure(operation, cwd, "Could not read the bookmark rewrite history."));
-      const versions = evolution.stdout.trim().split("\n");
-      const localChangeId = versions[0]?.split(" ")[1];
-      const amendedLocally =
-        remoteTarget !== null &&
-        localChangeId !== undefined &&
-        versions.includes(`${remoteTarget.commitId} ${localChangeId}`);
+      const amendedLocally = yield* isOwnRewrite(process, operation, cwd, {
+        local: beforeFetch.commitId,
+        remote: remoteRevset,
+      });
       return yield* jjFailure(
         operation,
         cwd,
         amendedLocally
-          ? `${refName} was amended locally. Push ${refName} to ${upstreamRef} in jj instead of pulling.`
+          ? `${refName} was amended locally. Push ${refName} to ${upstreamRef} instead of pulling.`
           : `${refName} has local changes. Rebase onto ${upstreamRef} in jj instead of pulling.`,
       );
     }

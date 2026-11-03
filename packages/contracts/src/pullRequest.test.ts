@@ -1,9 +1,11 @@
 import { SourceControlProviderKind } from "./sourceControl.ts";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   PullRequestDetail,
+  PullRequestDiffInput,
   PullRequestListResult,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
@@ -128,6 +130,33 @@ describe("PullRequestCapabilities", () => {
       requestReviewers: true,
     });
     expect(decoded.title).toBe(detail.title);
+  });
+});
+
+describe("PullRequestDiffInput", () => {
+  const decode = Schema.decodeUnknownResult(Schema.toCodecJson(PullRequestDiffInput));
+  const ref = { projectId: "project-1", repository: "pingdotgg/t3code", number: 1 };
+
+  it("reads an older client's diff request as the whole change", () => {
+    expect(decode({ ...ref, commit: "abc1234" })).toEqual(
+      Result.succeed({ ...ref, commit: "abc1234" }),
+    );
+  });
+
+  it("reads one round, or what changed since an earlier one", () => {
+    expect(decode({ ...ref, round: { number: 2 } })).toEqual(
+      Result.succeed({ ...ref, round: { number: 2 } }),
+    );
+    expect(decode({ ...ref, round: { number: 3, since: 1 } })).toEqual(
+      Result.succeed({ ...ref, round: { number: 3, since: 1 } }),
+    );
+  });
+
+  it("refuses a since that is not earlier, or a round beside a commit", () => {
+    expect(Result.isFailure(decode({ ...ref, round: { number: 2, since: 2 } }))).toBe(true);
+    expect(Result.isFailure(decode({ ...ref, commit: "abc1234", round: { number: 2 } }))).toBe(
+      true,
+    );
   });
 });
 
