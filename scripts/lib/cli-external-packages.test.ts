@@ -51,9 +51,11 @@ describe("shouldBundleCliDependency", () => {
     assert.strictEqual(shouldBundleCliDependency("node-gyp-build-optional-packages"), false);
   });
 
-  it("inlines zod for bundled importers while still staging it for Cursor", () => {
-    assert.strictEqual(shouldBundleCliDependency("zod"), true);
-    assert.strictEqual(isRuntimeExternalCliDependency("zod"), true);
+  it("inlines zod and undici for bundled importers while still staging them for Cursor", () => {
+    for (const id of ["zod", "undici"]) {
+      assert.strictEqual(shouldBundleCliDependency(id), true, id);
+      assert.strictEqual(isRuntimeExternalCliDependency(id), true, id);
+    }
   });
 });
 
