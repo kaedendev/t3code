@@ -19,6 +19,10 @@ const cases: ReadonlyArray<readonly [string, GitCommandFailureReason | undefined
     "authentication_failed",
   ],
   ["git@example.com: Permission denied (publickey).", "authentication_failed"],
+  [
+    "knot: this ssh key doesn't match any key published by the accounts that may push here.\nfatal: the remote end hung up unexpectedly",
+    "authentication_failed",
+  ],
   ["Host key verification failed.", "host_key_unverified"],
   ["fatal: Could not read from remote repository.", "remote_unreachable"],
   ["remote: authentication failed for secret", undefined],

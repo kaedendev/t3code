@@ -1,0 +1,37 @@
+{
+  "diffs": [
+    {
+      "hasByteChanges": {
+        "lhs": 1075,
+        "rhs": 1087
+      },
+      "hunks": [
+        {
+          "lines": [
+            {
+              "lhs": 22,
+              "rhs": 22
+            }
+          ],
+          "novelLhs": [22],
+          "novelRhs": [22]
+        }
+      ],
+      "lhsSrc": {
+        "content": "FROM docker.io/library/rust:1.96-slim-trixie AS builder\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n      ca-certificates build-essential cmake perl pkg-config clang mold \\\n    && rm -rf /var/lib/apt/lists/*\nENV RUSTFLAGS=\"-C linker=clang -C link-arg=-fuse-ld=mold\"\nWORKDIR /src\nCOPY Cargo.toml Cargo.lock rust-toolchain.toml ./\nCOPY crates ./crates\nCOPY bobbin/crates ./bobbin/crates\nCOPY shuttle ./shuttle\nCOPY knotmirror/crates ./knotmirror/crates\nCOPY lexicons ./lexicons\nCOPY knot2/crates ./knot2/crates\nCOPY knot2/third_party ./knot2/third_party\nRUN cargo build --release --package knot-server --package knot-migrate\nRUN strip target/release/knot-server target/release/knot-migrate\n\nFROM gcr.io/distroless/cc-debian13:latest@sha256:d74d144baa124dd9defd01d71872bb56c49d4441dba6153ccf790364f97e64b1\nCOPY --from=builder /src/target/release/knot-server /usr/local/bin/knot-server\nCOPY --from=builder /src/target/release/knot-migrate /usr/local/bin/knot-migrate\nEXPOSE 5555 2222\nENTRYPOINT [\"/usr/local/bin/knot-server\"]\nCMD [\"/etc/knot/config.toml\"]\n",
+        "isBinary": false,
+        "isSubmodule": false,
+        "oid": "e046a7c46c6dba2960b8b9f57d09584cd9d74619",
+        "path": "knot2/Containerfile",
+        "size": 1075
+      },
+      "rhsSrc": {
+        "isBinary": false,
+        "isSubmodule": false,
+        "oid": "131d1b4e347e74d18025fbd56e916a352c83daa9",
+        "path": "knot2/Containerfile",
+        "size": 1087
+      }
+    }
+  ]
+}

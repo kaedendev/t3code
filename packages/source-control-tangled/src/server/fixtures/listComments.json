@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "body": { "$type": "org.tangled.markup.markdown", "text": "lgtm" },
+      "cid": "bafyreieqxqhc5ui3gp4ssckxbrezz7ethahbo57h6dnmaarjfnhlx6ypk4",
+      "createdAt": "2026-11-02T18:12:27Z",
+      "editor": "did:plc:qfpnj4og54vl56wngdriaxug",
+      "subject": {
+        "cid": "bafyreihgq74w22tgtwhfpzzg6xessz3nafkkajierbr6ycsv5bybbfbmlu",
+        "uri": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.track.ticket/4665"
+      },
+      "uri": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.feed.comment/3mzdwfegghuhk"
+    }
+  ],
+  "total": 1
+}

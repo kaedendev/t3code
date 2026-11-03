@@ -19,6 +19,7 @@ import {
   BookOpenIcon,
   CopyIcon,
   HammerIcon,
+  IterationCcwIcon,
   LinkIcon,
   MessageCircleQuestionIcon,
   MoreHorizontalIcon,
@@ -393,6 +394,20 @@ export function PullRequestActionsMenu({
             ) ? (
               <MenuSeparator />
             ) : null}
+          </>
+        ) : null}
+        {detail.state === "open" && can("resubmit") ? (
+          <>
+            <MenuItem disabled={actionPending} onClick={() => void perform("resubmit")}>
+              <IterationCcwIcon className="mt-1 size-3.5 shrink-0 self-start" />
+              <span className="flex min-w-0 flex-col">
+                <span>{pendingAction === "resubmit" ? "Resubmitting..." : "Resubmit"}</span>
+                <span className="text-xs text-muted-foreground">
+                  Submits the branch's new commits as the next round.
+                </span>
+              </span>
+            </MenuItem>
+            <MenuSeparator />
           </>
         ) : null}
         <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>

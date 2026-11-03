@@ -8,14 +8,13 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { beforeAll, describe } from "@effect/vitest";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { fakeSourceControlProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { isJjVersionSupported, parseJjVersion } from "../JjAvailability.ts";
 import * as JjVcsDriver from "../JjVcsDriver.ts";
@@ -227,13 +226,8 @@ export const commitId = (cwd: string, revset: string) =>
 export const changeId = (cwd: string, revset: string) =>
   jjOut(cwd, ["log", "-r", revset, "--no-graph", "-T", "change_id"]);
 
-const unknownSourceControlProvider = SourceControlProvider.SourceControlProvider.pipe(
-  Effect.provide(
-    Layer.mock(SourceControlProvider.SourceControlProvider)({
-      kind: SourceControlProviderKind.make("unknown"),
-    }),
-  ),
-);
+// A plain object rather than `Layer.mock`, whose proxy answers absent optional hooks too.
+const unknownSourceControlProvider = Effect.succeed(fakeSourceControlProvider("unknown"));
 
 /** Resolves to an unknown-kind provider. Unstubbed members fail loudly, which a status poll must not hit. */
 export const stubSourceControlProviders =

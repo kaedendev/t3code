@@ -133,6 +133,29 @@ describe("Jujutsu-only additions", () => {
     assert.equal(resolveQuickAction(jj, true).hint, "Jujutsu action in progress.");
   });
 
+  it("offers a push that replaces the bookmark's earlier pushed versions", () => {
+    const amended = status({
+      vcs: { kind: "jj" },
+      aheadCount: 2,
+      rewritesUpstream: true,
+      pr: {
+        number: 1,
+        title: "Stack",
+        url: "https://github.com/a/b/pull/1",
+        state: "open",
+        baseRef: "main",
+        headRef: "feature/test",
+      },
+    });
+    assert.deepEqual(resolveQuickAction(amended, false), {
+      label: "Push rewrite",
+      disabled: false,
+      kind: "run_action",
+      action: "push",
+    });
+    assert.isFalse(buildMenuItems(amended, false).find((item) => item.id === "push")!.disabled);
+  });
+
   it("blocks every action and surfaces the unsupported reason", () => {
     const message = "jj 0.40.0 is older than the supported 0.46.0.";
     const unsupported = status({
