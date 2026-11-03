@@ -248,11 +248,21 @@ To shape guides to your taste, write **Review guide instructions** in Settings â
 such as what to show first or what to skip; projects can override them. They change emphasis and
 ordering, not the guide's layout or which files it covers.
 
+### Review a change round by round
+
+Some hosts keep every resubmission of a change request as a numbered round. On those, the **Code**
+tab on web and the changed files on mobile offer a round picker. It opens on the latest round. Pick
+an earlier round to read it as it was, or **Changes since round N** to read only what changed after
+the round you last reviewed, such as an agent's next iteration. Line comments are written on the
+latest round, as they are from **All commits**.
+
 ### Mark files as viewed
 
 Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a
 running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
 single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
+An earlier round on its own keeps no ticks, since a tick records the latest version of a file;
+**Changes since round N** keeps them.
 
 On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
 in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record T3 Code can read, so the

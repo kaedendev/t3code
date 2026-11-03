@@ -60,7 +60,6 @@ function useChangedFiles(params: PullRequestDiffParams) {
   );
   // A commit's or round's diff is part of the pull request, so the PR's file counts don't apply.
   const pr = params.commit || params.round ? null : detail.data;
-  // A tick stamps the head's version of a file, so ticks apply only where the diff ends there.
   const ticks = !params.commit && pullRequestRoundEndsAtHead(activity.data?.rounds, params.round);
   const terminology = sourceControlClients.get(
     (detail.data ?? params.initialSummary)?.provider,
