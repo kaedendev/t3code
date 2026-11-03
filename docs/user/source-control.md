@@ -150,6 +150,12 @@ T3 Code reads public repositories without a sign-in, but opening, merging, closi
 pull requests need one. Pushing goes over SSH, so add an SSH key to your Tangled account in
 [tangled.org settings](https://tangled.org/settings) on the machine running your T3 Code server.
 
+Repositories on a self-hosted knot work too: T3 Code recognizes a remote such as
+`git@knot.example.com:did:plc:…` and clones and fetches from the knot itself. Git runs with the
+server machine's own SSH settings, so a knot whose SSH is reachable only on a private network needs
+a `Host` entry there that points at it. To publish new repositories to your knot, enter its host name
+under **Knot for new repositories** in the Tangled settings.
+
 T3 Code knows a Tangled repository by its own identity rather than its name, so renaming the
 repository or changing your handle keeps its project, threads and pull requests together.
 
