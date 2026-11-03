@@ -206,7 +206,7 @@ export function resolveQuickAction(
   if (isAhead) {
     if (hasOpenPr || isDefaultBranch)
       return {
-        label: "Push",
+        label: gitStatus.rewritesUpstream ? "Push rewrite" : "Push",
         disabled: false,
         kind: "run_action",
         action: isDefaultBranch ? "commit_push" : "push",
