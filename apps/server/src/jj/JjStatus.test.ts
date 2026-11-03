@@ -1079,6 +1079,49 @@ describeJj("JjStatus.remoteStatus", () => {
     ),
   );
 
+  it.effect.each([
+    {
+      name: "an amend under the pushed bookmark is a rewrite, not behind",
+      rewrite: [["squash", "--into", 'bookmarks(exact:"feat")-']],
+      expected: { aheadCount: 2, behindCount: 0, rewritesUpstream: true },
+    },
+    {
+      name: "a published change missing from the local stack stays behind",
+      rewrite: [
+        ["new", 'description(substring:"unrelated work")'],
+        ["bookmark", "set", "feat", "--allow-backwards", "-r", "@-"],
+      ],
+      expected: { aheadCount: 1, behindCount: 2, rewritesUpstream: undefined },
+    },
+  ])("$name", ({ rewrite, expected }) =>
+    withRepo({ withRemote: true }, ({ fileSystem, path, root, status }) =>
+      Effect.gen(function* () {
+        yield* runJj(root, ["new", 'bookmarks(exact:"main")', "-m", "unrelated work"]);
+        yield* fileSystem.writeFileString(path.join(root, "other.txt"), "other\n");
+        yield* runJj(root, ["new", 'bookmarks(exact:"main")']);
+        yield* fileSystem.writeFileString(path.join(root, "one.txt"), "one\n");
+        yield* runJj(root, ["commit", "-m", "one"]);
+        yield* fileSystem.writeFileString(path.join(root, "two.txt"), "two\n");
+        yield* runJj(root, ["commit", "-m", "two"]);
+        yield* runJj(root, ["bookmark", "create", "feat", "-r", "@-"]);
+        yield* runJj(root, ["git", "push", "--bookmark", "feat", "--remote", "origin"]);
+        yield* fileSystem.writeFileString(path.join(root, "one.txt"), "one, amended\n");
+        for (const args of rewrite) yield* runJj(root, args);
+
+        const remote = yield* status.remoteStatus({ cwd: root });
+
+        assert.deepEqual(
+          {
+            aheadCount: remote?.aheadCount,
+            behindCount: remote?.behindCount,
+            rewritesUpstream: remote?.rewritesUpstream,
+          },
+          expected,
+        );
+      }),
+    ),
+  );
+
   it.effect("does not let an empty working copy inflate the ahead count", () =>
     withRepo({ withRemote: true }, ({ root, status }) =>
       Effect.gen(function* () {

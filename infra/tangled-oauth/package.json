@@ -1,0 +1,21 @@
+{
+  "name": "@t3tools/tangled-oauth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy --stage prod",
+    "keygen": "node scripts/keygen.ts",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "typecheck": "effect-tsgo tsrs --noEmit"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.1",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

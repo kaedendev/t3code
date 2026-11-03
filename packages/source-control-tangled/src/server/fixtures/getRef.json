@@ -1,0 +1,11 @@
+{
+  "author": {
+    "email": "git@boltless.me",
+    "name": "Seongmin Lee",
+    "when": "2026-11-02T16:31:59.000000+09:00"
+  },
+  "message": "*: remove unused `sh.tangled.*` lexicons\n\nSigned-off-by: Seongmin Lee <git@boltless.me>\n",
+  "name": "refs/heads/master",
+  "oid": "02d9ff54fcdb96ae5665feb794aa14ba24302a79",
+  "totalCommits": 6211
+}

@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { fakeSourceControlProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 
 import {
   GitCommandError,
@@ -114,6 +115,7 @@ const withRepo = <A, E>(
   reads?:
     | ChangeRequestVcsReads
     | ((cwd: string, executeGit: ChangeRequestVcsReads["executeGit"]) => ChangeRequestVcsReads),
+  provider?: SourceControlProvider.SourceControlProvider["Service"],
 ) =>
   Effect.gen(function* () {
     const { root } = yield* seedJjRepo({
@@ -168,7 +170,10 @@ const withRepo = <A, E>(
       executeGit,
       process: recordingProcess,
       remotes,
-      sourceControlProviders: yield* stubSourceControlProviders,
+      sourceControlProviders:
+        provider === undefined
+          ? yield* stubSourceControlProviders
+          : { ...(yield* stubSourceControlProviders), resolve: () => Effect.succeed(provider) },
       changeRequestReads: (cwd) =>
         reads !== undefined
           ? Effect.succeed(typeof reads === "function" ? reads(cwd, executeGit) : reads)
@@ -713,6 +718,45 @@ describeJj("JjStackedAction push phase", () => {
       }),
     ),
   );
+
+  it.effect("tells the host of the push, and keeps the push when the host refuses", () => {
+    const told: Array<{ branch: string; headSha: string }> = [];
+    const provider = fakeSourceControlProvider("tangled", {
+      branchPushed: ({ branch, headSha }) =>
+        Effect.sync(() => told.push({ branch, headSha })).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("tangled"),
+                operation: "branchPushed",
+                cwd: "",
+                detail: "The pull request was not resubmitted.",
+              }),
+            ),
+          ),
+        ),
+    });
+    return withRepo(
+      ({ actions, createRef, driver, events, fileSystem, path, root }) =>
+        Effect.gen(function* () {
+          yield* fileSystem.writeFileString(path.join(root, "agent.txt"), "agent\n");
+          yield* runJj(root, ["commit", "-m", "agent work"]);
+          yield* createRef(root, "feat/rounds");
+
+          const result = yield* actions.runStackedAction(
+            runInput({ cwd: root, action: "push" }),
+            reporter(events),
+          );
+
+          assert.equal(result.push.status, "pushed");
+          assert.equal(result.toast.description, "The pull request was not resubmitted.");
+          const pushed = yield* driver.changeAt(root, 'bookmarks(exact:"feat/rounds")');
+          assert.deepStrictEqual(told, [{ branch: "feat/rounds", headSha: pushed?.commitId }]);
+        }),
+      undefined,
+      provider,
+    );
+  });
 
   it.effect("refuses to publish a conflicted change", () =>
     withRepo(({ actions, driver, events, fileSystem, path, root }) =>

@@ -1,5 +1,6 @@
 import {
   GitManagerError,
+  SourceControlProviderError,
   type GitCommandError,
   type GitActionProgressEvent,
   type GitRunStackedActionResult,
@@ -25,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import {
   hasProjectSettingsOverrides,
   resolveProjectSettings,
@@ -74,6 +76,7 @@ export interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
   headSha?: string | undefined;
+  repositoryKey?: string | undefined;
 }
 
 export interface ResolvedPullRequest {
@@ -305,6 +308,7 @@ export function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+    ...(summary.repositoryKey !== undefined ? { repositoryKey: summary.repositoryKey } : {}),
   };
 }
 function limitContext(value: string, maxChars: number): string {
@@ -331,7 +335,53 @@ function withDescription(title: string, description: string | undefined) {
   return description ? { title, description } : { title };
 }
 
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
+
+/**
+ * Tells the host about a branch T3 just pushed, for one whose change requests do not follow their
+ * branch. The push already stands, so a failure is logged and returned as a note for its toast.
+ */
+export const followPushedBranch = Effect.fn("followPushedBranch")(function* <E>(input: {
+  readonly provider: SourceControlProvider.SourceControlProvider["Service"] | null;
+  readonly cwd: string;
+  readonly branch: string;
+  readonly headSha: Effect.Effect<string, E>;
+}) {
+  const branchPushed = input.provider?.branchPushed;
+  if (branchPushed === undefined) return null;
+  return yield* input.headSha.pipe(
+    Effect.flatMap((headSha) => branchPushed({ cwd: input.cwd, branch: input.branch, headSha })),
+    Effect.as(null),
+    Effect.catch((cause) =>
+      Effect.logWarning("The host did not follow a pushed branch.", {
+        cwd: input.cwd,
+        branch: input.branch,
+        cause,
+      }).pipe(
+        Effect.as(
+          isSourceControlProviderError(cause)
+            ? cause.detail
+            : "The host was not told of the pushed commits.",
+        ),
+      ),
+    ),
+  );
+});
+
+/** `pushNote`, from `followPushedBranch`, takes the description's place. */
 export function summarizeGitActionResult(
+  result: Pick<GitRunStackedActionResult, "commit" | "push" | "pr">,
+  terms: ChangeRequestTerminology,
+  pushNote: string | null = null,
+): {
+  title: string;
+  description?: string;
+} {
+  const summary = summarizeSteps(result, terms);
+  return pushNote === null ? summary : { title: summary.title, description: pushNote };
+}
+
+function summarizeSteps(
   result: Pick<GitRunStackedActionResult, "commit" | "push" | "pr">,
   terms: ChangeRequestTerminology,
 ): {

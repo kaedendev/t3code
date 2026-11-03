@@ -782,6 +782,26 @@ it.effect("switches an auto-selected remote to HTTPS when the SSH push is refuse
   );
 });
 
+it.effect.each(["ssh", undefined] as const)(
+  "sends a refused SSH push to the host's key settings when it takes no HTTPS push (%s)",
+  (protocol) =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const error = yield* Effect.flip(
+        service.publishRepository({
+          cwd: "/workspace",
+          provider: SourceControlProviderKind.make("tangled"),
+          repository: "octocat/t3code",
+          visibility: "public",
+          ...(protocol === undefined ? {} : { protocol }),
+        }),
+      );
+
+      assert.include(error.detail, "Add the key at https://tangled.org/settings/keys");
+      assert.notInclude(error.detail, "HTTPS");
+    }).pipe(Effect.provide(layer({ git: failingPush("authentication_failed") }))),
+);
+
 // regression: #19219 publishing did not explain why the first push failed
 it.effect("says the repository exists when an unclassified publish push fails", () =>
   Effect.gen(function* () {
