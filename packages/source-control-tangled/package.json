@@ -17,6 +17,8 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@atproto/jwk": "0.7.4",
+    "@atproto/oauth-client-node": "0.5.13",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
