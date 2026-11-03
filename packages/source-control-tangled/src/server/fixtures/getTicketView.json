@@ -1,0 +1,21 @@
+{
+  "author": { "did": "did:plc:dfl62fgb7wtjj3fcbb72naae", "handle": "ptr.pet" },
+  "body": {
+    "text": "Signed-off-by: dawn <dawn@tangled.org>",
+    "$type": "org.tangled.markup.markdown"
+  },
+  "cid": "bafyreibn2vgz5wakkn5ameyntg7jgd6bueymyfwn5vbq4hszvx753hp7qm",
+  "createdAt": "2026-11-02T18:10:58Z",
+  "repo": {
+    "did": "did:plc:j5hmlfdrwkvtxm7cjmu7j2is",
+    "slug": "core",
+    "owner": { "did": "did:plc:wshs7t2adsemcrrd4snkeqli", "handle": "tangled.org" }
+  },
+  "state": "completed",
+  "targetBranch": "master",
+  "title": {
+    "text": "dont delete artifact blobs on attachment maintenance, echo back advertised object-format",
+    "$type": "org.tangled.markup.markdown#inline"
+  },
+  "uri": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.track.ticket/4665"
+}

@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "subject": "did:plc:xu5apv6kmu5jp7g5hwdnej42",
+      "uri": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.graph.collaborator/did:plc:xu5apv6kmu5jp7g5hwdnej42"
+    },
+    {
+      "subject": "did:plc:xasnlahkri4ewmbuzly2rlc5",
+      "uri": "at://did:plc:j5hmlfdrwkvtxm7cjmu7j2is/org.tangled.graph.collaborator/did:plc:xasnlahkri4ewmbuzly2rlc5"
+    }
+  ]
+}
