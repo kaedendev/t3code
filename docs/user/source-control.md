@@ -129,6 +129,23 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
+### Tangled
+
+Open **Settings → Source control**, expand **Tangled**, and sign in with your atproto account.
+T3 Code reads public repositories without a sign-in, but opening, merging, closing and commenting on
+pull requests need one. Pushing goes over SSH, so add an SSH key to your Tangled account in
+[tangled.org settings](https://tangled.org/settings) on the machine running your T3 Code server.
+
+T3 Code knows a Tangled repository by its own identity rather than its name, so renaming the
+repository or changing your handle keeps its project, threads and pull requests together.
+
+Tangled merges by rebasing onto the target branch, so that is the only merge method offered. Tangled
+has no draft pull requests, requested reviewers, review approvals or line comments; comments on a
+pull request apply to the whole pull request. Checks come from the repository's spindle. A run for
+a pull request from someone outside the repository waits until a collaborator approves it on
+Tangled. Creating a Tangled repository from T3 Code is not available yet: create it on tangled.org,
+then add it by its URL.
+
 ## Start, clone, or publish a project
 
 To start from nothing, choose **New project** in the command palette (`Cmd/Ctrl+K`), or

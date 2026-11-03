@@ -8,7 +8,7 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
-import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -329,9 +329,9 @@ export interface SourceControlDefinition {
   readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
   /**
    * For a host that spells one repository differently over SSH and on the web: the web spelling
-   * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
-   * the key is not this host's. Persisted repository keys are built with it, so its output must
-   * not change.
+   * of the key `normalizeGitRemoteUrl` made from a remote that names a host, which is `host/path`,
+   * or the lower-cased remote itself when its path is one segment. Null when the key is not this
+   * host's. Persisted repository keys are built with it, so its output must not change.
    */
   readonly repositoryKeyFromRemote?: (key: string) => string | null;
   /**
@@ -751,7 +751,7 @@ export function makeSourceControlDefinitionRegistry(
     },
     repositoryKeyFromRemote: (remoteUrl) => {
       const key = normalizeGitRemoteUrl(remoteUrl);
-      if (parseGitRemoteRepository(remoteUrl) === null) return key;
+      if (parseGitRemoteHost(remoteUrl) === null) return key;
       for (const definition of definitions) {
         const spelled = definition.repositoryKeyFromRemote?.(key);
         if (spelled != null) return spelled;

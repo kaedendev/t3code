@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "effect": "catalog:"
   },

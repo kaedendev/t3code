@@ -74,6 +74,7 @@ export interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
   headSha?: string | undefined;
+  repositoryKey?: string | undefined;
 }
 
 export interface ResolvedPullRequest {
@@ -305,6 +306,7 @@ export function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+    ...(summary.repositoryKey !== undefined ? { repositoryKey: summary.repositoryKey } : {}),
   };
 }
 function limitContext(value: string, maxChars: number): string {
