@@ -41,9 +41,10 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
   );
 }
 
-// Staged for Cursor, yet imported as ESM by bundled code (atproto's OAuth client), which a
-// single-executable cannot resolve, so the bundle inlines its own copy.
-const INLINED_RUNTIME_DEPENDENCIES: ReadonlySet<string> = new Set(["zod"]);
+// Staged for Cursor, yet imported by bundled code: atproto's OAuth client imports zod as ESM,
+// which a single-executable cannot resolve, and undici under aliases neverBundle cannot match.
+// Both are plain JavaScript, so the bundle inlines its own copies.
+const INLINED_RUNTIME_DEPENDENCIES: ReadonlySet<string> = new Set(["zod", "undici"]);
 
 /** Use neverBundle: false from alwaysBundle means no opinion and leaves transitive packages bundled. */
 export function isExternalCliDependency(id: string): boolean {
