@@ -65,7 +65,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
-// Forge CLIs can take seconds per call; cap them together so git, checkpoints included, keeps slots.
+// Forge CLIs can take seconds per call; cap them together so git and jj, checkpoints included, keep slots.
 const NON_GIT_PROCESS_CONCURRENCY = VCS_PROCESS_CONCURRENCY / 2;
 
 /** Shown to users when a Git command fails because another process holds the index lock. */
@@ -376,7 +376,10 @@ export const make = Effect.gen(function* () {
         }),
       );
     }
-    const shared = input.command === "git" ? bounded : nonGitProcesses.withPermits(1)(bounded);
+    const shared =
+      input.command === "git" || input.command === "jj"
+        ? bounded
+        : nonGitProcesses.withPermits(1)(bounded);
     return yield* input.concurrency === undefined ? shared : keyedPermit(input.concurrency)(shared);
   });
 

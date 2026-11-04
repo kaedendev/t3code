@@ -467,58 +467,64 @@ describe("VcsProcess.run", () => {
     }),
   );
 
-  it.effect("leaves git a slot while slow forge CLI processes are running", () =>
-    Effect.gen(function* () {
-      const gate = yield* Deferred.make<void>();
-      const service = yield* VcsProcess.make.pipe(
-        Effect.provideService(
-          ProcessRunner.ProcessRunner,
-          ProcessRunner.ProcessRunner.of({
-            run: (input) =>
-              Effect.gen(function* () {
-                if (input.command !== "git") yield* Deferred.await(gate);
-                return {
-                  stdout: "",
-                  stderr: "",
-                  code: ChildProcessSpawner.ExitCode(0),
-                  timedOut: false,
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                  stdoutInvalidUtf8: false,
-                  stderrInvalidUtf8: false,
-                };
-              }),
-          }),
-        ),
-      );
+  it.effect.each(["git", "jj"] as const)(
+    "leaves %s a slot while slow forge CLI processes are running",
+    (command) =>
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>();
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(
+            ProcessRunner.ProcessRunner,
+            ProcessRunner.ProcessRunner.of({
+              run: (input) =>
+                Effect.gen(function* () {
+                  if (input.command !== command) yield* Deferred.await(gate);
+                  return {
+                    stdout: "",
+                    stderr: "",
+                    code: ChildProcessSpawner.ExitCode(0),
+                    timedOut: false,
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                    stdoutInvalidUtf8: false,
+                    stderrInvalidUtf8: false,
+                  };
+                }),
+            }),
+          ),
+        );
 
-      const forgeRuns = yield* Effect.forEach(Array.from({ length: 12 }), () =>
-        service
+        const forgeRuns = yield* Effect.forEach(Array.from({ length: 12 }), () =>
+          service
+            .run({
+              operation: "synthetic.forge.listChangeRequests",
+              command: "tea",
+              args: ["pulls", "list"],
+              cwd: "/workspace",
+            })
+            .pipe(Effect.forkChild({ startImmediately: true })),
+        );
+        const checkpoint = yield* service
           .run({
-            operation: "synthetic.forge.listChangeRequests",
-            command: "tea",
-            args: ["pulls", "list"],
-            cwd: "/workspace",
+            ...baseInput,
+            command,
+            operation:
+              command === "git"
+                ? VcsProcess.CHECKPOINT_CAPTURE_OPERATION
+                : VcsProcess.JJ_CHECKPOINT_CAPTURE_OPERATION,
+            args: ["rev-parse", "HEAD"],
           })
-          .pipe(Effect.forkChild({ startImmediately: true })),
-      );
-      const checkpoint = yield* service
-        .run({
-          ...baseInput,
-          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
-          args: ["rev-parse", "HEAD"],
-        })
-        .pipe(Effect.timeoutOption("1 second"), Effect.forkChild({ startImmediately: true }));
-      yield* TestClock.adjust("1 second");
+          .pipe(Effect.timeoutOption("1 second"), Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 second");
 
-      const gitResult = yield* Fiber.join(checkpoint);
-      yield* Deferred.succeed(gate, undefined);
-      yield* Fiber.joinAll(forgeRuns);
-      expect(
-        Option.isSome(gitResult),
-        "git waited behind forge CLI runs that held every VCS process slot",
-      ).toBe(true);
-    }),
+        const result = yield* Fiber.join(checkpoint);
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.joinAll(forgeRuns);
+        expect(
+          Option.isSome(result),
+          `${command} waited behind forge CLI runs that held every VCS process slot`,
+        ).toBe(true);
+      }),
   );
 
   it.effect("keeps git from opening a folder laid out as a bare repository", () =>
