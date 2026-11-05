@@ -118,6 +118,8 @@ import {
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
+import { SettingsDictationRewriteRouteScreen } from "./features/settings/SettingsDictationRewriteRouteScreen";
+import { SettingsDictationWordsRouteScreen } from "./features/settings/SettingsDictationWordsRouteScreen";
 import {
   SettingsOpenSourceLicenseRouteScreen,
   SettingsOpenSourceLicensesRouteScreen,
@@ -372,6 +374,16 @@ const SETTINGS_SCREENS = {
       ...SETTINGS_PAGE_OPTIONS,
       title: "Microphone",
     },
+  }),
+  SettingsDictationWords: createNativeStackScreen({
+    screen: SettingsDictationWordsRouteScreen,
+    linking: "settings/microphone/words",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Words" },
+  }),
+  SettingsDictationRewrite: createNativeStackScreen({
+    screen: SettingsDictationRewriteRouteScreen,
+    linking: "settings/microphone/rewrite",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "AI rewrite" },
   }),
   SettingsFollowUp: createNativeStackScreen({
     screen: SettingsFollowUpRouteScreen,

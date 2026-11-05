@@ -24,7 +24,7 @@ vi.mock("expo-file-system", () => ({
   },
 }));
 
-import { getLocalVoiceTranscriber } from "./voiceTranscription.ios";
+import { getAppleVoiceTranscriber } from "./voiceTranscription.ios";
 
 const audio = new ArrayBuffer(4);
 const nativeTranscript: TranscriptionResult = {
@@ -55,7 +55,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("getLocalVoiceTranscriber", () => {
+describe("getAppleVoiceTranscriber", () => {
   it("does not start native transcription after cancellation during a file read", async () => {
     const enteredRead = deferred<void>();
     const readResult = deferred<ArrayBuffer>();
@@ -65,7 +65,7 @@ describe("getLocalVoiceTranscriber", () => {
     });
     const controller = new AbortController();
     const options = { signal: controller.signal };
-    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+    const prepared = await getAppleVoiceTranscriber()!.prepare(options);
     const result = prepared
       .transcribe("file:///voice.m4a", options)
       .catch((error: unknown) => error);

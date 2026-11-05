@@ -194,7 +194,22 @@ while the AirPods microphone stays low. By default, CarPlay comes after the buil
 microphone. Swipe a device left to forget it.
 
 Transcription runs on your device. T3 Code deletes the temporary audio after
-transcription or cancellation; only the message text is sent when you submit.
+transcription or cancellation; only the message text is sent when you submit,
+unless you turn on AI rewrite.
+
+The same screen has optional dictation settings, all off by default:
+
+- **Parakeet transcription** downloads an on-device speech model of about 0.6 GB and
+  uses it once the download finishes. It covers 25 European languages; in other device
+  languages, dictation keeps using Apple's transcription. Turning it off keeps the
+  model on your device; use **Delete model** to free the space.
+- **Cleanup** turns spoken formatting ("new line", "quote … unquote") and spoken
+  symbols ("comma", "hashtag") into text, removes filler words, and applies your
+  replacements from **Words**.
+- **AI rewrite** sends the cleaned transcript to an OpenAI-compatible provider you
+  choose, with your instructions and the vocabulary from **Words**, and inserts its
+  rewrite. Your API key stays in this device's keychain. If the provider fails or takes
+  longer than 15 seconds, the cleaned transcript is inserted instead.
 
 ## Queued messages
 
