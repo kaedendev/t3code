@@ -77,6 +77,11 @@ export class ParakeetModel {
         } while (this.again);
       } catch (error) {
         console.warn("[parakeet] could not read or change the model files", error);
+        // A failed delete would otherwise leave "Removing the model…" with no row to act on.
+        await getParakeetModelState().then(
+          (disk) => this.set({ kind: disk }),
+          () => this.set({ kind: "failed", message: "Could not read the model files." }),
+        );
       } finally {
         this.running = null;
       }

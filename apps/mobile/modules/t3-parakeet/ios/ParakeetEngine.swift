@@ -36,6 +36,11 @@ actor ParakeetEngine {
             progress.report(update.fractionCompleted / 0.5)
           }
         }
+        // Re-downloadable content stays out of the user's iCloud backup.
+        var directory = Self.modelDirectory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? directory.setResourceValues(values)
         progress.report(1)
       }
     downloading = task
@@ -71,12 +76,13 @@ actor ParakeetEngine {
     downloading?.cancel()
     _ = await downloading?.result
     _ = await lastTranscription?.result
-    if let manager = try? await loading?.value {
-      await manager.cleanup()
-    }
+    let loaded = loading
     downloading = nil
     loading = nil
     lastTranscription = nil
+    if let manager = try? await loaded?.value {
+      await manager.cleanup()
+    }
     if FileManager.default.fileExists(atPath: Self.modelDirectory.path) {
       try FileManager.default.removeItem(at: Self.modelDirectory)
     }
