@@ -17,3 +17,13 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+export {
+  DEFAULT_DICTATION_SETTINGS,
+  DEFAULT_REWRITE_INSTRUCTIONS,
+  parseDictationSettings,
+  resolveDictationPipeline,
+  withDictationPipeline,
+  type DictationPipeline,
+  type DictationSettings,
+  type VoiceEngineChoice,
+} from "./dictation.ts";

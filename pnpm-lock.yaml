@@ -588,6 +588,9 @@ importers:
       '@t3tools/mobile-highlights-native':
         specifier: file:./modules/t3-highlights
         version: file:apps/mobile/modules/t3-highlights
+      '@t3tools/mobile-parakeet':
+        specifier: file:./modules/t3-parakeet
+        version: file:apps/mobile/modules/t3-parakeet(expo@58.0.14)
       '@t3tools/mobile-review-diff-native':
         specifier: file:./modules/t3-review-diff
         version: file:apps/mobile/modules/t3-review-diff
@@ -6657,6 +6660,11 @@ packages:
 
   '@t3tools/mobile-highlights-native@file:apps/mobile/modules/t3-highlights':
     resolution: {directory: apps/mobile/modules/t3-highlights, type: directory}
+
+  '@t3tools/mobile-parakeet@file:apps/mobile/modules/t3-parakeet':
+    resolution: {directory: apps/mobile/modules/t3-parakeet, type: directory}
+    peerDependencies:
+      expo: '*'
 
   '@t3tools/mobile-review-diff-native@file:apps/mobile/modules/t3-review-diff':
     resolution: {directory: apps/mobile/modules/t3-review-diff, type: directory}
@@ -16374,6 +16382,10 @@ snapshots:
       defer-to-connect: 2.0.1
 
   '@t3tools/mobile-highlights-native@file:apps/mobile/modules/t3-highlights': {}
+
+  '@t3tools/mobile-parakeet@file:apps/mobile/modules/t3-parakeet(expo@58.0.14)':
+    dependencies:
+      expo: 58.0.14(277a83826bb26ba15256633fefeb0bc2)
 
   '@t3tools/mobile-review-diff-native@file:apps/mobile/modules/t3-review-diff': {}
 
