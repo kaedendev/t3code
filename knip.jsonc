@@ -123,6 +123,8 @@
         "@t3tools/mobile-terminal-native",
       ],
     },
+    // Its package entry is the module's JS API, which the app imports through the copied `file:` dependency.
+    "apps/mobile/modules/t3-parakeet": {},
     "apps/mobile/modules/t3-source-text": {
       // React Native codegen discovers component specifications by filename.
       "entry": ["src/*NativeComponent.ts!"],

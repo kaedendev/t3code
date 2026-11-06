@@ -1,5 +1,6 @@
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { resolveDictationPipeline } from "@t3tools/client-runtime/voice-input";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
 import { useState } from "react";
@@ -9,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
 import { cn } from "../../lib/cn";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
@@ -21,12 +23,24 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
-import { SettingsDragHandle } from "./components/SettingsDragHandle";
-import { SettingsSection } from "./components/SettingsSection";
 import {
-  deviceMicrophoneOrder,
-  localVoiceTranscriberAtom,
-} from "../voice-input/VoiceInputProvider";
+  dictationSettingsAtom,
+  useUpdateDictationSettings,
+} from "../voice-input/dictationSettings";
+import {
+  parakeetModelAtom,
+  parakeetSupportsLocale,
+  removeParakeetModel,
+  retryParakeetDownload,
+  type ParakeetModelStatus,
+} from "../voice-input/parakeetModel";
+import { rewriteKeyPresentAtom } from "../voice-input/rewriteKey";
+import { SettingsDragHandle } from "./components/SettingsDragHandle";
+import { SettingsRow } from "./components/SettingsRow";
+import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { localVoiceTranscriberAtom } from "../voice-input/localVoiceTranscriber";
+import { deviceMicrophoneOrder } from "../voice-input/VoiceInputProvider";
 
 type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
@@ -242,8 +256,138 @@ function MicrophoneSettings() {
             ? " Android may use another input when the preferred microphone cannot be routed."
             : null}
         </Text>
+        <DictationSections />
       </ScrollView>
     </View>
+  );
+}
+
+function parakeetDescription(status: ParakeetModelStatus, chosen: boolean): string {
+  switch (status.kind) {
+    case "unsupported":
+      return "Not available on this device.";
+    case "missing":
+      return chosen ? "Not downloaded." : "Transcribes on this device. About 0.6 GB to download.";
+    case "downloading":
+      return status.fraction < 1
+        ? `Downloading ${Math.round(status.fraction * 100)}%`
+        : "Preparing the model…";
+    case "ready":
+      if (!chosen) return "Downloaded. Apple transcription is in use.";
+      return parakeetSupportsLocale(Intl.DateTimeFormat().resolvedOptions().locale)
+        ? "Ready."
+        : "Ready. Your device language uses Apple transcription.";
+    case "failed":
+      return `Download failed. ${status.message}`;
+    case "deleting":
+      return "Removing the model…";
+  }
+}
+
+function DictationSections() {
+  const dictation = useAtomValue(dictationSettingsAtom);
+  const parakeet = useAtomValue(parakeetModelAtom);
+  const hasRewriteKey = useAtomValue(rewriteKeyPresentAtom);
+  const update = useUpdateDictationSettings();
+  const chosen = dictation.engine === "parakeet";
+  const setCleanup = (patch: Partial<typeof dictation.cleanup>) =>
+    update((current) => ({ ...current, cleanup: { ...current.cleanup, ...patch } }));
+  const wordCount = dictation.cleanup.replacements.length + dictation.vocabulary.length;
+  // The key's value doesn't matter here, only whether the pipeline would get one.
+  const rewriteReady =
+    resolveDictationPipeline(dictation, hasRewriteKey ? "saved" : null).rewrite !== null;
+
+  return (
+    <>
+      {/* Parakeet is iOS-only; elsewhere the built-in engine is the only choice. */}
+      {parakeet.kind === "unsupported" ? null : (
+        <SettingsSection
+          title="Transcription"
+          footer="Parakeet supports 25 European languages. In other languages, dictation keeps using Apple transcription."
+        >
+          <SettingsSwitchRow
+            icon="mic"
+            label="Parakeet transcription"
+            subtitle={parakeetDescription(parakeet, chosen)}
+            value={chosen}
+            onValueChange={(on) =>
+              update((current) => ({ ...current, engine: on ? "parakeet" : "apple" }))
+            }
+          />
+          {chosen && parakeet.kind === "failed" ? (
+            <SettingsActionRow
+              icon="arrow.clockwise"
+              label="Retry download"
+              onPress={retryParakeetDownload}
+            />
+          ) : null}
+          {chosen && parakeet.kind === "missing" ? (
+            <SettingsActionRow
+              icon="arrow.down.circle"
+              label="Download model"
+              onPress={retryParakeetDownload}
+            />
+          ) : null}
+          {parakeet.kind === "ready" ? (
+            <SettingsActionRow
+              icon="trash"
+              tone="danger"
+              label="Delete model"
+              onPress={() =>
+                Dialog.confirm({
+                  title: "Delete the Parakeet model?",
+                  message: chosen
+                    ? "This frees about 0.6 GB and switches dictation back to Apple transcription."
+                    : "This frees about 0.6 GB.",
+                  confirmText: "Delete",
+                  destructive: true,
+                  onConfirm: () => {
+                    // Left on, the next launch's reconcile would download the model again.
+                    update((current) => ({ ...current, engine: "apple" }));
+                    removeParakeetModel();
+                  },
+                })
+              }
+            />
+          ) : null}
+        </SettingsSection>
+      )}
+      <SettingsSection title="Cleanup">
+        <SettingsSwitchRow
+          icon="text.alignleft"
+          label="Spoken formatting"
+          subtitle="Say “new line”, “new paragraph”, or “quote … unquote”."
+          value={dictation.cleanup.spokenFormatting}
+          onValueChange={(spokenFormatting) => setCleanup({ spokenFormatting })}
+        />
+        <SettingsSwitchRow
+          icon="chevron.left.forwardslash.chevron.right"
+          label="Spoken symbols"
+          subtitle="Say “comma”, “hashtag”, or “underscore” to type the symbol."
+          value={dictation.cleanup.spokenSymbols}
+          onValueChange={(spokenSymbols) => setCleanup({ spokenSymbols })}
+        />
+        <SettingsSwitchRow
+          icon="slash.circle"
+          label="Remove filler words"
+          subtitle="Drops “um”, “uh”, and similar sounds."
+          value={dictation.cleanup.fillerWords}
+          onValueChange={(fillerWords) => setCleanup({ fillerWords })}
+        />
+        <SettingsRow
+          icon="tag"
+          label="Words"
+          value={wordCount > 0 ? String(wordCount) : undefined}
+          target="SettingsDictationWords"
+        />
+        <SettingsRow
+          icon="sparkles"
+          label="AI rewrite"
+          value={rewriteReady ? "On" : dictation.rewrite.enabled ? "Incomplete" : "Off"}
+          target="SettingsDictationRewrite"
+        />
+      </SettingsSection>
+    </>
   );
 }
 

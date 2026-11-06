@@ -1,0 +1,7 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3ParakeetModule"],
+    "podspecPath": "T3ParakeetNative.podspec"
+  }
+}

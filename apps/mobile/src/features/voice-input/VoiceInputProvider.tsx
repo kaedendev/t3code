@@ -13,18 +13,16 @@ import {
   preferredMicrophoneInput,
   rememberMicrophones,
 } from "../../lib/microphonePriority";
-import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
-import {
-  voiceInputBlocksSubmission,
-  type VoiceTranscriber,
-} from "@t3tools/client-runtime/voice-input";
+import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
 import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
+import { resolveDictationTranscriber } from "./dictationTranscriber";
+import { localVoiceTranscriberAtom } from "./localVoiceTranscriber";
+import { voiceEngineAtom } from "./parakeetModel";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
-import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   acquireAudioSession,
   activateAudioSession,
@@ -52,21 +50,6 @@ function keepScreenAwake(tag: string): () => void {
 
 export const deviceMicrophoneOrder = (saved?: ReadonlyArray<MicrophoneEntry>) =>
   microphoneOrder(saved, Platform.OS === "android" ? "android" : "ios");
-
-/** "checking" until the first availability probe settles; re-probed on foreground. */
-export const localVoiceTranscriberAtom = makePermissionStatusAtom<
-  VoiceTranscriber | null | "checking"
->({
-  label: "mobile:voice-input:transcriber",
-  initial: "checking",
-  read: () => getLocalVoiceTranscriber().catch(() => null),
-}).pipe(Atom.keepAlive);
-
-// Each foreground re-probe yields a new transcriber; composers re-render only when availability flips.
-const localVoiceInputAvailableAtom = Atom.make((get) => {
-  const transcriber = get(localVoiceTranscriberAtom);
-  return transcriber !== null && transcriber !== "checking";
-});
 
 /**
  * The app has one microphone and one dictation at a time, so the session
@@ -114,10 +97,7 @@ const voiceInputAtom = Atom.make((get) => {
   });
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
-    getTranscriber: () => {
-      const transcriber = registry.get(localVoiceTranscriberAtom);
-      return transcriber === "checking" ? null : transcriber;
-    },
+    getTranscriber: () => resolveDictationTranscriber(registry),
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
       const token = acquireAudioSession("recording");
@@ -153,11 +133,11 @@ const voiceInputAtom = Atom.make((get) => {
 
 export function useGlobalVoiceInput() {
   const { session, audioLevels } = useAtomValue(voiceInputAtom);
-  const isTranscriberAvailable = useAtomValue(localVoiceInputAvailableAtom);
+  const engine = useAtomValue(voiceEngineAtom);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
   return {
     ...snapshot,
-    isAvailable: isTranscriberAvailable || getNativeShowcaseScene() !== null,
+    isAvailable: engine !== null || getNativeShowcaseScene() !== null,
     audioLevels,
     isBusy: voiceInputBlocksSubmission(snapshot.state),
     session,
