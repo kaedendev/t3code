@@ -686,6 +686,30 @@ describe("pools", () => {
     ]);
   });
 
+  it("names a hub account that could not be read instead of dropping it silently", () => {
+    const expired = {
+      id: "claude-expired.json",
+      driver: claude,
+      email: "expired@example.com",
+      usageLimits: {
+        checkedAt,
+        windows: [],
+        unavailable: { reason: "probeFailed" as const, message: "The login expired." },
+      },
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts: [expired] }] },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input)).toEqual([]);
+    expect(collectLimitNotices(input)).toEqual(["hub · expired@example.com: The login expired."]);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",

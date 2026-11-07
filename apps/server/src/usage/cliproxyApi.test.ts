@@ -56,6 +56,7 @@ function fixture(
       email?: string;
       disabled?: boolean;
       project_id?: string;
+      status_message?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
@@ -322,8 +323,13 @@ describe("CLIProxyAPI built-in management API", () => {
   it.effect("isolates a failed account and never publishes upstream error bodies", () =>
     Effect.gen(function* () {
       const test = fixture({
+        accounts: [
+          { ...accounts[0]!, status_message: "invalid grant (retrying)" },
+          accounts[1]!,
+          { ...accounts[1]!, id: "third.json", auth_index: "c", status_message: "x" },
+        ],
         upstream: (request) =>
-          request.auth_index === "a"
+          request.auth_index !== "b"
             ? { status: 401, body: { token: "do-not-publish" } }
             : {
                 status: 200,
@@ -334,8 +340,14 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(result[0]?.usageLimits.unavailable).toEqual({
+        reason: "probeFailed",
+        message: "The login expired. Sign in to this account again in CLIProxyAPI.",
+      });
       expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
+      expect(result[2]?.usageLimits.unavailable?.message).toBe(
+        "The hub could not read this account's usage.",
+      );
       expect(encodeJson(result)).not.toContain("do-not-publish");
     }),
   );
