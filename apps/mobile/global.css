@@ -16,6 +16,7 @@
   /* Keep these native family names aligned with app.config.ts. */
   --font-sans: "DMSans-Regular";
   --font-medium: "DMSans-Medium";
+  --font-semibold: "DMSans-SemiBold";
   --font-bold: "DMSans-Bold";
 
   /* Keep this scale aligned with src/lib/typography.ts for native style props. */
@@ -42,6 +43,10 @@
 /* ─── Custom utilities ──────────────────────────────────────────────── */
 @utility font-t3-medium {
   font-family: var(--font-medium);
+}
+
+@utility font-t3-semibold {
+  font-family: var(--font-semibold);
 }
 
 @utility font-t3-bold {
