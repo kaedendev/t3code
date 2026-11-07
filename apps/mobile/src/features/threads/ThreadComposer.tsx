@@ -44,6 +44,7 @@ import {
 import Animated, {
   FadeIn,
   FadeOut,
+  interpolate,
   type LayoutAnimationFunction,
   ReduceMotion,
   useAnimatedStyle,
@@ -138,7 +139,7 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+function useCompactComposerEditor(text: ScaledTextRole, value: string, focused: boolean) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
@@ -155,29 +156,50 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
-    value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
+    focused ||
+    (value.length > 0 &&
+      (contentHeight > text.lineHeight * 1.5 ||
+        (compactWidth > 0 && contentSize.width > compactWidth)));
   const compactRowHeight = Math.max(44, minimum);
+  const compactBottom = (compactRowHeight - minimum) / 2;
   const isRTL = I18nManager.isRTL;
-  const editorStyle = useAnimatedStyle(() => ({
-    position: "absolute",
-    overflow: "hidden",
-    height,
-    ...(isExpanded
-      ? { left: 14, right: 14 }
-      : compactEditorInsets({
-          slotX: editorX.value,
-          slotWidth: editorWidth.value,
-          rowWidth: rowWidth.value,
-          isRTL,
-        })),
-    // The full-width editor must move above the controls in the same frame it widens.
-    bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
+  const animates = COMPOSER_LAYOUT_TRANSITION !== undefined;
+  const expandProgress = useDerivedValue(() =>
+    !animates
+      ? Number(isExpanded)
+      : withTiming(Number(isExpanded), {
+          duration: COMPOSER_TRANSITION_DURATION_MS,
+          reduceMotion: ReduceMotion.System,
+        }),
+  );
+  const containerStyle = useAnimatedStyle(() => ({
+    height: interpolate(
+      expandProgress.value,
+      [0, 1],
+      [compactRowHeight, height + EXPANDED_TOOLBAR_SPACE],
+    ),
   }));
+  const editorStyle = useAnimatedStyle(() => {
+    const compact = compactEditorInsets({
+      slotX: editorX.value,
+      slotWidth: editorWidth.value,
+      rowWidth: rowWidth.value,
+      isRTL,
+    });
+    const progress = expandProgress.value;
+    return {
+      position: "absolute",
+      overflow: "hidden",
+      height,
+      left: interpolate(progress, [0, 1], [compact.left, 14]),
+      right: interpolate(progress, [0, 1], [compact.right, 14]),
+      // The editor rises above the toolbar row while the surface grows beneath it.
+      bottom: interpolate(progress, [0, 1], [compactBottom, EXPANDED_EDITOR_BOTTOM]),
+    };
+  });
   return {
     isExpanded,
-    containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
+    containerStyle,
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       rowWidth.set(event.nativeEvent.layout.width);
@@ -281,14 +303,25 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
   };
 };
 const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
-// Share of the one-row composer the draft keeps; a long model name truncates first.
+// Share of the one-row composer the draft keeps beside compact attachments.
 const INLINE_EDITOR_MIN_WIDTH = "40%";
 const INLINE_EDITOR_HEIGHT = 36;
+const EXPANDED_TOOLBAR_SPACE = 46;
+// Below the toolbar space, so the text sits close to the controls and the slack goes above it.
+const EXPANDED_EDITOR_BOTTOM = 38;
 
 const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"
     ? FadeIn.duration(160)
     : FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS).duration(160).reduceMotion(ReduceMotion.System);
+
+// The model control appears once the editor has risen out of its row.
+const COMPOSER_CONTROL_ENTERING =
+  Platform.OS === "android"
+    ? FadeIn.duration(120)
+    : FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS / 2)
+        .duration(160)
+        .reduceMotion(ReduceMotion.System);
 
 const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
@@ -596,7 +629,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const compactEditor = useCompactComposerEditor(bodyText, draftMessage, isExpanded);
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -797,7 +830,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   ) : null;
 
   const modelControl = (
-    <View className="min-w-0 shrink">
+    <Animated.View
+      className="min-w-0 shrink"
+      entering={COMPOSER_CONTROL_ENTERING}
+      exiting={FadeOut.duration(100)}
+    >
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -806,10 +843,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={!compactEditor.isExpanded}
         onPress={openSettings}
       />
-    </View>
+    </Animated.View>
   );
 
   return (
@@ -1088,11 +1124,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               ) : null}
               <View
                 className="min-w-0 shrink flex-row items-center"
-                style={
-                  compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
-                }
+                style={compactEditor.isExpanded ? { flex: 1 } : undefined}
               >
-                {modelControl}
+                {compactEditor.isExpanded ? <View className="flex-1" /> : null}
+                {compactEditor.isExpanded ? modelControl : null}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
                   state={voiceInput.state}
