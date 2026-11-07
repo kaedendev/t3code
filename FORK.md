@@ -24,8 +24,18 @@ The stack has three parts:
   - `CLI_RELEASE_REPOSITORY` points at this fork.
   - `.github/workflows/fork-release.yml` builds releases.
   - `scripts/fork-release-version.ts` numbers them.
+  - `scripts/fork-testflight.sh` builds the iOS app and uploads it to TestFlight.
 
-The App Store app works against a fork server. It shows Git wording for jj repos, and it has no Tangled sign-in, round picker or Resubmit action; sign in to Tangled from web or desktop, and the server keeps the session for every client.
+The fork also ships its own iOS app through TestFlight; see [Mobile app](#mobile-app). The App Store app still works against a fork server. It shows Git wording for jj repos, and it has no Tangled sign-in, round picker or Resubmit action; sign in to Tangled from web or desktop, and the server keeps the session for every client.
+
+## Working in the fork
+
+These trip up agents that follow upstream's habits:
+
+- **Base branch.** Open PRs against `kaeden/stable` on `kaedendev/t3code`. In T3 worktrees that repository is the `origin` remote; the rebase steps below call it `fork`. Never open PRs on `pingdotgg/t3code`.
+- **CI never finishes.** Most jobs run on Blacksmith runners, which the fork doesn't have, so they stay queued forever. "Agent context budget" fails because it measures against upstream `main`. Run `vp run check:changed origin/kaeden/stable` and the affected tests locally instead. Merge with `gh pr merge --squash --admin` and cancel the queued runs. Without the base argument, `check:changed` diffs against upstream and fails with `spawn E2BIG`.
+- **Upstream-only workflows.** The `Mobile EAS *` workflows and `release.yml` are gated on `pingdotgg/t3code` and never run here. EAS builds go to upstream's Expo project and Apple team, so don't use `eas build` or `eas submit` for the fork.
+- **Tools off `PATH`.** Agent shells may not load a login profile. `vp` lives in `~/.vite-plus/bin`. This Mac has no CocoaPods or Homebrew, so run anything that needs `pod`, such as `vp run mobile:install` after a native change, inside `nix shell nixpkgs#cocoapods -c …`.
 
 ## T3 Connect
 
@@ -55,7 +65,25 @@ Fork versions sort above every upstream release on the same minor version. Clien
    gh workflow run fork-release.yml --repo kaedendev/t3code --ref kaeden/stable -f publish=true
    ```
 
+These builds cover the CLI and desktop app only. Ship the iOS app separately; see [Mobile app](#mobile-app).
+
 After a release is published, **Update everything** in a fork client moves the fleet. `t3 update` on a server also installs it. Desktop apps update themselves.
+
+## Mobile app
+
+The fork's iOS app is signed by Kaeden's team (`28AUT7GBK3`) as `com.kaedenmurphy.t3code` and distributed through TestFlight. The app config uses that team and bundle ID only when `T3CODE_IOS_TEAM_ID` and `T3CODE_IOS_BUNDLE_ID` are set. Without them, dev and preview builds keep upstream's identifiers, so don't put either variable in `.env` or `.env.local`.
+
+To ship a TestFlight build, merge to `kaeden/stable`, then run this from a clean checkout of it on the Mac:
+
+```sh
+scripts/fork-testflight.sh
+```
+
+It sets the signing and T3 Connect values, runs a clean prebuild with CocoaPods from Nix, archives with automatic signing through the Apple account signed into Xcode, and uploads with a timestamp build number. It takes about 10 minutes, and Apple then needs 5 to 30 minutes to process the build. It prints its log path; on failure it shows the last errors.
+
+- The first archive after a new Swift package can stop at "Resolving packages" with no CPU use. SwiftPM is waiting on a macOS keychain prompt for github.com credentials. Click **Always Allow** on the Mac.
+- There's no Android release for the fork.
+- The fork publishes no OTA updates, so JS changes reach phones only through a new TestFlight build.
 
 ## macOS signing
 
