@@ -1,13 +1,13 @@
 # The kaedendev fork
 
-This fork is T3 Code's latest upstream **stable** release plus Jujutsu (jj) support and a Tangled integration. It has its own release channel, and its servers and desktop apps update only from `kaedendev/t3code`.
+This fork is an upstream T3 Code release plus Jujutsu (jj) support and a Tangled integration. It has its own release channel, and its servers and desktop apps update only from `kaedendev/t3code`.
 
 ## What the fork carries
 
-`kaeden/stable` is an upstream stable tag (`vX.Y.Z` on `pingdotgg/t3code`) with a short stack of fork commits on top. List the stack with:
+`kaeden/stable` is an upstream release tag on `pingdotgg/t3code` with a short stack of fork commits on top. The base is the latest stable tag (`vX.Y.Z`) unless the owner wants a feature that only a nightly has; then it is that nightly (`vX.Y.Z-nightly.DATE.N`), until a stable release catches up. List the stack with:
 
 ```sh
-git log --oneline $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' kaeden/stable)..kaeden/stable
+git log --oneline $(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*.*.1[0-9][0-9][0-9][0-9]' --exclude '*-preview.*' kaeden/stable)..kaeden/stable
 ```
 
 The stack has three parts:
@@ -49,7 +49,7 @@ Fork builds use upstream's production relay (`relay.t3.codes`) and Clerk app, so
 
 ## Version numbers
 
-A fork build of upstream `X.Y.P`, respin `N`, is `X.Y.(10000 + 100·P + N)`. For example, upstream 0.1.6 respin 1 is `0.1.10601`.
+A fork build of upstream `X.Y.P`, respin `N`, is `X.Y.(10000 + 100·P + N)`. For example, upstream 0.1.6 respin 1 is `0.1.10601`. On a nightly base, `P` is the newest stable tag in the branch's history, so a build on a 0.1.8 nightly is numbered as a 0.1.7 respin.
 
 Fork versions sort above every upstream release on the same minor version. Clients therefore never offer an upstream release as an update. To return a machine to upstream, run `t3 update --allow-downgrade`.
 
@@ -108,12 +108,12 @@ Do this once per machine. After that, updates come from the fork.
 
   Threads and settings in `~/.t3` carry over.
 
-## Rebase onto a new upstream stable
+## Rebase onto a new upstream release
 
 An agent can run these steps unattended. Every gate must pass before anything ships.
 
-1. Find the newest upstream stable: `gh release view --repo pingdotgg/t3code --json tagName -q .tagName`. Call it `NEW`.
-2. Find the current base: `OLD=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' fork/kaeden/stable)`. If `NEW` equals `OLD`, stop.
+1. Find the target. The newest stable is `gh release view --repo pingdotgg/t3code --json tagName -q .tagName`. For a nightly, take the newest `v*-nightly.*` tag that contains the wanted commits (`git merge-base --is-ancestor <commit> <tag>`). Call it `NEW`.
+2. Find the current base: `OLD=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*.*.1[0-9][0-9][0-9][0-9]' --exclude '*-preview.*' fork/kaeden/stable)`. If `NEW` equals `OLD`, stop.
 3. Create a worktree next to the others. Base a branch `kaeden/stable-$NEW` on `fork/kaeden/stable`, then run `git rebase --onto $NEW $OLD`.
 4. Resolve each conflict so both upstream's change and the fork's intent survive. Never revert upstream work to make a hunk apply. Each commit must typecheck on its own.
 5. Find git calls that upstream added between `OLD` and `NEW` in `apps/server/src`, and route them by VCS kind. Record any you leave for later.
