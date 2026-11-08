@@ -40,11 +40,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import {
-  ProviderIcon,
-  ProviderInstanceIcon,
-  providerInstanceNameLabel,
-} from "../../components/ProviderIcon";
+import { providerInstanceNameLabel } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -75,7 +71,6 @@ import {
   resolveThreadListV2SnoozePresets,
   threadHasUnseenCompletion,
   resolveThreadListV2Status,
-  resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   type ThreadListV2Status,
@@ -152,20 +147,17 @@ const TABULAR_DURATION_STYLE = {
   fontVariant: ["tabular-nums"],
 } as const;
 
-function ThreadListV2Duration(props: {
-  readonly startedAt: string | null;
-  readonly leadingSpace: boolean;
-}) {
+// Desktop rows pair a 16px icon with 14px titles; mobile keeps that ratio.
+const ROW_ICON_SCALE = 16 / 14;
+
+function ThreadListV2Duration(props: { readonly startedAt: string | null }) {
   const startedAtMs = Date.parse(props.startedAt ?? "");
   const nowMs = useVisibleSecondClock(Number.isFinite(startedAtMs));
   if (!Number.isFinite(startedAtMs)) return null;
   return (
-    <>
-      {props.leadingSpace ? " " : null}
-      <RNText style={TABULAR_DURATION_STYLE}>
-        {formatWorkingDurationLabel(nowMs - startedAtMs)}
-      </RNText>
-    </>
+    <RNText style={TABULAR_DURATION_STYLE}>
+      {formatWorkingDurationLabel(nowMs - startedAtMs)}
+    </RNText>
   );
 }
 
@@ -193,6 +185,7 @@ function ThreadListV2Section(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
   readonly tone?: "default" | "snoozed";
+  readonly count?: number;
   readonly disclosure?: {
     readonly expanded: boolean;
     readonly disabled?: boolean;
@@ -221,12 +214,29 @@ function ThreadListV2Section(props: {
       >
         {props.label}
       </Text>
+      {/* A trailing count drops the rule so it doesn't read as a leader, as on desktop. */}
       <View
         className={cn(
           "h-px flex-1",
-          snoozed ? "bg-primary/20" : sidebarPane ? "bg-drawer-border" : "bg-border",
+          props.count !== undefined
+            ? "opacity-0"
+            : snoozed
+              ? "bg-primary/20"
+              : sidebarPane
+                ? "bg-drawer-border"
+                : "bg-border",
         )}
       />
+      {props.count !== undefined ? (
+        <Text
+          className={cn(
+            "text-xs tabular-nums",
+            sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-tertiary",
+          )}
+        >
+          {props.count}
+        </Text>
+      ) : null}
       {props.disclosure ? (
         <SymbolView
           name="chevron.down"
@@ -239,7 +249,7 @@ function ThreadListV2Section(props: {
                 : "accent-foreground-muted"
           }
           type="monochrome"
-          style={{ transform: [{ rotate: props.disclosure.expanded ? "180deg" : "0deg" }] }}
+          style={{ transform: [{ rotate: props.disclosure.expanded ? "0deg" : "-90deg" }] }}
         />
       ) : null}
     </>
@@ -289,7 +299,8 @@ function ThreadListV2ShelfHeader(
   const label = SHELF_LABEL[props.kind];
   return (
     <ThreadListV2Section
-      label={props.expanded ? label : `${label} (${props.count})`}
+      label={label}
+      count={props.count}
       pane={props.pane}
       tone={props.kind === "snoozed" ? "snoozed" : "default"}
       disclosure={{
@@ -390,7 +401,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
   const metadataTypography = useScaledTextRole("label");
-  const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
+  const projectIconSize = titleTypography.fontSize * ROW_ICON_SCALE * fontScale;
   const machineIconSize = metadataTypography.fontSize * fontScale;
   // Android's nonlinear system text scaling can differ from the fontScale estimate.
   const [androidTitleLineHeight, setTitleLineHeight] = useState(
@@ -450,7 +461,6 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     [onDeletePendingTask, pendingTask],
   );
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const rowContent = (
     <>
       <View className="flex-row items-start gap-2">
@@ -473,7 +483,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               ? selectedThreadRowColors.foregroundClassName
               : rowAppearance.foregroundClassName,
           )}
-          numberOfLines={2}
+          numberOfLines={1}
           onTextLayout={
             Platform.OS === "android"
               ? ({ nativeEvent }) => {
@@ -514,7 +524,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         ) : null}
       </View>
       {!isDraft ? (
-        <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
+        <View className="mt-0.5">
           <Text
             className={cn(
               "text-xs",
@@ -528,7 +538,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         </View>
       ) : null}
       {branch || props.environmentLabel ? (
-        <View className="mt-1 flex-row items-center gap-1" style={{ paddingLeft: titleTextInset }}>
+        <View className="mt-0.5 flex-row items-center gap-1">
           {props.environmentLabel && props.environmentMachine ? (
             <EnvironmentMachineSymbol
               kind={props.environmentMachine}
@@ -702,7 +712,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
   const metadataTypography = useScaledTextRole("label");
-  const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
+  const projectIconSize = titleTypography.fontSize * ROW_ICON_SCALE * fontScale;
   const machineIconSize = metadataTypography.fontSize * fontScale;
   // Android's nonlinear system text scaling can differ from the fontScale estimate.
   const [androidTitleLineHeight, setTitleLineHeight] = useState(
@@ -734,27 +744,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
-    const provider = props.providers?.find(
-      (candidate) =>
-        candidate.instanceId ===
-        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-    );
-    return {
-      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
-      providerIconUrl: provider?.iconUrl,
-    };
-  }, [thread, props.providers]);
-
-  const providerInstance = props.providerInstance;
-  const providerNameLabel = providerInstance
-    ? providerInstanceNameLabel({
-        provider: providerInstance.driverKind,
-        iconUrl: providerIconUrl,
-        displayName: providerInstance.displayName,
-        showBadge: providerInstance.showBadge,
-      })
-    : null;
   const pr = useThreadPr(thread);
   const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
   const handleOpenPullRequests = useCallback(() => {
@@ -776,6 +765,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
+  const providerInstance = props.providerInstance;
+  const providerNameLabel = providerInstance
+    ? providerInstanceNameLabel({
+        provider: providerInstance.driverKind,
+        iconUrl: props.providers?.find(
+          (candidate) =>
+            candidate.instanceId ===
+            (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+        )?.iconUrl,
+        displayName: providerInstance.displayName,
+        showBadge: providerInstance.showBadge,
+      })
+    : null;
   const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
 
@@ -1179,7 +1181,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : rowAppearance.foregroundClassName,
             isRegeneratingTitle && "opacity-55",
           )}
-          numberOfLines={2}
+          numberOfLines={1}
           onTextLayout={
             Platform.OS === "android"
               ? ({ nativeEvent }) => {
@@ -1214,29 +1216,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             >
               <SymbolView
                 name="bell.badge"
-                size={13}
+                size={projectIconSize}
                 tintColorClassName={
                   selected ? selectedThreadRowColors.iconTintClassName : "accent-warning-foreground"
                 }
                 type="monochrome"
                 weight="semibold"
               />
-              <Text
-                className={cn(
-                  "text-xs font-t3-bold",
-                  selected
-                    ? selectedThreadRowColors.foregroundClassName
-                    : "text-warning-foreground",
-                )}
-              >
-                Woke
-              </Text>
             </Pressable>
           ) : statusLabel ? (
-            <View className="flex-row items-center gap-1">
+            <View
+              accessible
+              accessibilityLabel={statusLabel.label ?? undefined}
+              className="flex-row items-center gap-1"
+            >
               <SymbolView
                 name={statusLabel.icon}
-                size={13}
+                size={projectIconSize}
                 tintColorClassName={
                   selected
                     ? selectedThreadRowColors.iconTintClassName
@@ -1245,25 +1241,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 type="monochrome"
                 weight="semibold"
               />
-              <Text
-                className={cn(
-                  "text-xs font-t3-bold",
-                  selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
-                )}
-              >
-                {statusLabel.label}
-                {status === "working" ? (
-                  <ThreadListV2Duration
-                    startedAt={resolveThreadWorkingStartedAt(thread)}
-                    leadingSpace={statusLabel.label !== null}
-                  />
-                ) : status === "waiting" ? (
-                  <ThreadListV2Duration
-                    startedAt={thread.latestRun?.completedAt ?? null}
-                    leadingSpace={statusLabel.label !== null}
-                  />
-                ) : null}
-              </Text>
+              {status === "working" || status === "waiting" ? (
+                <Text
+                  className={cn(
+                    "text-xs font-t3-bold",
+                    selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
+                  )}
+                >
+                  {status === "working" ? (
+                    <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
+                  ) : (
+                    <ThreadListV2Duration startedAt={thread.latestRun?.completedAt ?? null} />
+                  )}
+                </Text>
+              ) : null}
             </View>
           ) : (
             <Text
@@ -1289,7 +1280,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         </View>
       ) : null}
-      <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
+      <View className="mt-0.5 flex-row items-center gap-2">
         {(status === "failed" || status === "limited") && thread.runtime?.lastError ? (
           <Text
             className={cn(
@@ -1371,44 +1362,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               {pr.label}
             </Text>
           </Pressable>
-        ) : null}
-        {providerInstance ? (
-          <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map(
-              (driver, index) => (
-                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
-                  key={`${driver}:${index}`}
-                  className="-mr-1 opacity-30"
-                >
-                  <ProviderIcon provider={driver} size={12} />
-                </View>
-              ) /* oxlint-enable react/no-array-index-key */,
-            )}
-            <ProviderInstanceIcon
-              iconUrl={providerIconUrl}
-              provider={providerInstance.driverKind}
-              size={14}
-              displayName={providerInstance.displayName}
-              accentColor={providerInstance.accentColor}
-              showBadge={providerInstance.showBadge}
-              surfaceColor={rowAppearance.providerIconSurfaceColor}
-            />
-            {providerNameLabel ? (
-              <Text
-                className={cn(
-                  "ml-1.5 text-xs",
-                  selected
-                    ? selectedThreadRowColors.mutedForegroundClassName
-                    : rowAppearance.tertiaryForegroundClassName,
-                )}
-                ellipsizeMode="middle"
-                numberOfLines={1}
-                style={{ maxWidth: 140 }}
-              >
-                {providerNameLabel}
-              </Text>
-            ) : null}
-          </View>
         ) : null}
       </View>
     </>
