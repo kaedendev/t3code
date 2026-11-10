@@ -41,6 +41,8 @@ These trip up agents that follow upstream's habits:
 
 Fork builds use upstream's production relay (`relay.t3.codes`) and Clerk app, so a fork machine links to the same T3 Connect account as upstream machines. `fork-release.yml` holds the four public values upstream bakes into its builds. Upstream can rotate them; if linking breaks after an upstream release, read them from that release's `t3` binary (`buildTimeRelayUrl`, `buildTimeClerkPublishableKey`, `buildTimeClerkCliOAuthClientId`, and the `clerkJwtTemplate` in its client bundle). Builds made before this change have Connect turned off and need a reinstall. Relay tracing stays off in fork builds.
 
+An agent signing in on a machine's T3 Connect address is approved on the hosted app's `/approve-agent` page. Upstream sends stable builds to `app.t3.codes`, which lacks that page until a stable release ships it, and fork builds count as stable. `agentApprovalAppUrlConfig` in `apps/server/src/cloud/publicConfig.ts` therefore always uses `nightly.app.t3.codes`. `T3CODE_HOSTED_APP_URL` on a server still overrides it.
+
 ## Known limits of jj support
 
 - A stale workspace is reported, not repaired. If you rewrite a thread's change from another workspace, T3 shows "workspace is stale". Run `jj workspace update-stale` in that workspace yourself.
@@ -117,6 +119,7 @@ An agent can run these steps unattended. Every gate must pass before anything sh
 3. Create a worktree next to the others. Base a branch `kaeden/stable-$NEW` on `fork/kaeden/stable`, then run `git rebase --onto $NEW $OLD`.
 4. Resolve each conflict so both upstream's change and the fork's intent survive. Never revert upstream work to make a hunk apply. Each commit must typecheck on its own.
 5. Find git calls that upstream added between `OLD` and `NEW` in `apps/server/src`, and route them by VCS kind. Record any you leave for later.
+   - If `NEW` is a stable tag that contains `apps/web/src/routes/approve-agent.tsx` (`app.t3.codes` serves stable), restore upstream's `agentApprovalAppUrlConfig` default and remove the paragraph about it under [T3 Connect](#t3-connect).
 6. Run the gates. All must pass:
    - `vp run check:changed $NEW`
    - `vp test run apps/server/src/jj apps/server/src/vcs apps/server/src/checkpointing apps/server/src/git apps/server/src/pullRequest packages/source-control-tangled infra/tangled-oauth scripts/fork-release-version.test.ts`
