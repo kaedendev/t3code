@@ -76,19 +76,6 @@ const PREVIEW_ASSETS = {
   androidNotificationColor: "#7565C7",
 } as const;
 
-const RELEASE_ASSETS = {
-  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
-  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
-  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
-  androidAdaptiveForeground,
-  androidAdaptiveBackgroundColor: "#000000",
-  androidAdaptiveBackgroundImage: undefined,
-  androidSplashIcon: "./assets/android-splash-icon-prod.png",
-  androidMonochromeIcon: "./assets/android-icon-mark.png",
-  androidNotificationIcon: "./assets/android-notification-icon.png",
-  androidNotificationColor: "#FFFFFF",
-} as const;
-
 const VARIANT_CONFIG = {
   development: {
     appName: "T3 Code Dev",
@@ -112,7 +99,8 @@ const VARIANT_CONFIG = {
     iosBundleIdentifier: "com.t3tools.t3code",
     androidPackage: "com.t3tools.t3code",
     relyingParty: "clerk.t3.codes",
-    assets: RELEASE_ASSETS,
+    // Fork: the TestFlight build ships the nightly icon.
+    assets: PREVIEW_ASSETS,
   },
 } as const;
 
