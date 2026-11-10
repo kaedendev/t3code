@@ -8,10 +8,12 @@ import {
   type EnvironmentId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { environmentMcpUrl } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sessionPermissionsUnavailableMessage } from "@t3tools/shared/authScopeOptions";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
 import { Linking, View } from "react-native";
@@ -20,8 +22,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { serverEnvironment } from "../../state/server";
 import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -63,9 +67,20 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   const session = useAtomValue(environmentSession.sessionStateValueAtom(environmentId));
   const sessionResult = useAtomValue(environmentSession.sessionStateAtom(environmentId));
   const updateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
-  const outdated =
-    useAtomValue(environmentPresentations.presentationAtom(environmentId))?.entry
-      .serverUpdateRequired === true;
+  const entry = useAtomValue(environmentPresentations.presentationAtom(environmentId))?.entry;
+  const outdated = entry?.serverUpdateRequired === true;
+  const prepared = useAtomValue(environmentSession.preparedConnectionValueAtom(environmentId));
+  const discoveredRelayHttpBaseUrl = useAtomValue(
+    relayEnvironmentDiscovery.stateValueAtom,
+  ).environments.get(environmentId)?.environment.endpoint.httpBaseUrl;
+  // Discovery empties its map on every refresh; keep the last relay address so the URL holds.
+  const [lastRelayHttpBaseUrl, setLastRelayHttpBaseUrl] = useState(discoveredRelayHttpBaseUrl);
+  if (
+    discoveredRelayHttpBaseUrl !== undefined &&
+    discoveredRelayHttpBaseUrl !== lastRelayHttpBaseUrl
+  ) {
+    setLastRelayHttpBaseUrl(discoveredRelayHttpBaseUrl);
+  }
   const updateServer = useAtomCommand(serverEnvironment.updateServer);
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders);
@@ -80,6 +95,14 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   const release = releaseCheckValue(releaseCheck);
 
   const connected = environment?.isEnabled === true && environment.connectionState === "connected";
+  const mcpUrl =
+    entry === undefined
+      ? null
+      : environmentMcpUrl({
+          entry,
+          relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
+          connectedTarget: connected && Option.isSome(prepared) ? prepared.value.target : null,
+        });
   const allowed =
     !AsyncResult.isFailure(sessionResult) && canMaintainEnvironment(session, connected);
   const running = updateState.status === "running";
@@ -203,6 +226,16 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 navigation.navigate("SettingsEnvironmentNew", { routeFor: environmentId })
               }
             />
+            {mcpUrl ? (
+              <SettingsSection title="Use in another app">
+                <SettingsActionRow
+                  icon="doc.on.doc"
+                  label="Copy MCP URL"
+                  description={mcpUrl}
+                  onPress={() => copyTextWithHaptic(mcpUrl, { target: "MCP URL" })}
+                />
+              </SettingsSection>
+            ) : null}
             {outdated ? (
               <OutdatedServerUpdateSection
                 environmentId={environmentId}
