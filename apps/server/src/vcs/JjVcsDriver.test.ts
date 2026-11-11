@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { CheckpointRef, VcsError } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -39,8 +40,6 @@ const withRepo = <A, E>(
   use: (fixture: JjRepoFixture) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
 ) => withJjRepo({ prefix: "t3-jj-driver-" }, use);
 
-const TEST_JJ_CONFIG = process.env.JJ_CONFIG ?? "";
-
 describeJj("Jujutsu VCS driver contract", () => {
   runVcsDriverContractSuite<never, JjContractError>({
     name: "Jujutsu",
@@ -71,7 +70,8 @@ describeJj("JjVcsDriver detection", () => {
     withRepo(({ root, path }) =>
       Effect.gen(function* () {
         const configPath = (yield* runJj(root, ["config", "path", "--repo"])).trim();
-        const testConfig = TEST_JJ_CONFIG;
+        // JjTestSupport points JJ_CONFIG at a disposable file in beforeAll, after module load.
+        const testConfig = yield* Config.String("JJ_CONFIG").pipe(Config.withDefault(""));
         assert.notStrictEqual(testConfig, "");
         assert.isTrue(configPath.startsWith(`${path.dirname(testConfig)}${path.sep}`));
       }),
